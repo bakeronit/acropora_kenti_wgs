@@ -1,0 +1,71 @@
+---
+title: "Read alignment"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.retina = 2)
+library(tidyverse)
+library(ggpubr)
+source("scripts/my_color.R")
+```
+
+We used `bwa` to map short reads from samples to *Acropora tenius* genome assembly [version v0.11](http://aten.reefgenomics.org/download/).
+
+### 0. Index genome
+
+We used `bwa index`, `samtools faidx`, and `picard CreateSequenceDictionary` to generate the dictionary and index files for gatk variant calling workflow.
+
+```bash
+bwa index reference.fa
+samtools faidx reference.fa
+picard CreateSequenceDictionary R=reference.fasta O=reference.fasta.dict
+```
+
+### 1. Generate mapping files
+
+We used `bwa` (v0.7.17-r1188) to map short reads of each sample library/batch/lane to reference genome assembly, separately. Before mapping, the fastq files were converted to unmapped bam files with read group information using `picard FastqToSam` then the adapter sequences in reads were marked using `picard MarkIlluminaAdapters`. This step was implemented in snakemake script [readAlignment.smk](scripts/hpc/preprocessing/01.readAlignment_inner.smk).
+
+Next, we used `gatk Markduplicates` to mark duplicated reads and merge multiple bam files for each sample as gatk [suggested](https://gatk.broadinstitute.org/hc/en-us/articles/360035889471-How-should-I-pre-process-data-from-multiplexed-sequencing-and-multi-library-designs-). We made sure the bam files were sorted by coordinates to ensure duplicates from secondary alignments were marked.
+
+### 2. Down-sampling high sequenced samples
+
+Before variant calling, we generated down-sampled version of two high depth samples (FI-1-3, MI-1-4) using `sambamba view`.
+
+```bash
+sambamba view -f bam -s 0.13 -t 10 --subsampling-seed=36 FI-1-3_S9_aligned_duplicates_marked_sorted.bam -o FI-1-3_subsampled_aligned_duplicates_marked_sorted.bam
+sambamba view -f bam -s 0.12 -t 10 --subsampling-seed=36 MI-1-4_S10_aligned_duplicates_marked_sorted.bam -o MI-1-4_subsampled_aligned_duplicates_marked_sorted.bam
+```
+
+### 3. Mapping results
+
+For all samples, the average mapping rate is 93.12%(84.47%-97.86%), average genome coverage is 74.30% (38.82%-86.30%), the net mapping rate is 3.39X (1.77X-5.30X).
+
+```{r mapping}
+df <- read_csv("data/hpc/qc/summary_data.csv") %>% mutate(pop_order=site_order()[pop],
+                                                          mapping_rate=as.numeric(sub("%", "", mapping_rate)),
+                                                          genome_cov=as.numeric(sub("%", "", genome_cov)))
+
+df2 <- df %>% select(sample_id,pop, mapping_rate,genome_cov,net_mapping_depth,pop_order) %>% pivot_longer(-c(sample_id,pop,pop_order),names_to = "stats") %>%
+  mutate(stats=factor(stats,levels = c("mapping_rate","genome_cov","net_mapping_depth")))
+
+stat.labs <- c("Mapping rate (%)", "Genome coverage (%)", "Mapping depth (X)")
+names(stat.labs) <- c("mapping_rate", "genome_cov", "net_mapping_depth")
+
+df2 %>% ggplot(aes(x=reorder(pop,pop_order),y=value,color=pop)) + 
+  geom_boxplot() +
+  scale_color_manual(values = site_colors(),guide=F) +
+  theme_pubclean()+ coord_flip() + facet_wrap(~stats, scales = "free_x",labeller = labeller(stats = stat.labs))+ labs(y="",x="")
+```
+
+**Here, the mapping depths were calculated based on the genome region with reads covered instead of average mapping depth across the genome. This is useful when making decision in filtering step.**
+
+We noticed that although samples from outer reefs got more sequencing data as in [sequencing data summary](00.sample_sequencing_info.md), they tend to have lower mapping rates. Does this mean samples from outer reefs contain more reads from their symbiosis algae?
+
+With more reads, samples from outer reefs have higher genome coverage, which means they had sequenced more genome. With the exception that samples from Arlington reefs had a big variance, and because of that, the ARL samples had highest mapping depths since some samples only covered half of the genome.
+
+
+
+
+
+
