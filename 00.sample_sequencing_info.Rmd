@@ -8,10 +8,19 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.retina
 library(tidyverse)
 library(ggpubr)
 library(ggbreak)
+library(knitr)
 source("scripts/my_color.R")
 ```
 
-**TODO:** A map of sampling sites.
+
+```{r map}
+include_graphics("figures/Atenius-sampling-googlemaps.png")
+
+```
+
+
+**TODO:** A better map
+
 
 We sampled *Acropora tenius* corals from both inner and outer Great Barrier Reef (GBR) at 9 locations.
 

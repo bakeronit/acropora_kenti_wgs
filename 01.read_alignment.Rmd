@@ -54,6 +54,7 @@ names(stat.labs) <- c("mapping_rate", "genome_cov", "net_mapping_depth")
 
 df2 %>% ggplot(aes(x=reorder(pop,pop_order),y=value,color=pop)) + 
   geom_boxplot() +
+  geom_point() +
   scale_color_manual(values = site_colors(),guide=F) +
   theme_pubclean()+ coord_flip() + facet_wrap(~stats, scales = "free_x",labeller = labeller(stats = stat.labs))+ labs(y="",x="")
 ```

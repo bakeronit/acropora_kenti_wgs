@@ -1,5 +1,5 @@
 ---
-title: "Variant calling"
+title: "Variant calling using gatk"
 output: github_document
 ---
 
