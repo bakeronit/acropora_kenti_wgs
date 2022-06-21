@@ -54,7 +54,7 @@ We found that samples from Magnetic Island form a separate group and few samples
 ```{r pca-cov}
 ggplot(pop_pca12, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+
   scale_color_manual(values = site_colors(), labels=site_labels()) + 
-  geom_label_repel(data=pop_pca12 %>% left_join(s_table) %>% filter(stats=="genome_cov" & value<60)%>% mutate(sample_id=str_remove(sample_id,"_S[\\d+]")),aes(x=x,y=y,label=sample_id),max.overlaps = 20, size=2)+
+  geom_label_repel(data=pop_pca12 %>% left_join(s_table) %>% filter(stats=="genome_cov" & value<60)%>% mutate(sample_id=str_remove(sample_id,"_S[\\d]+")),aes(x=x,y=y,label=sample_id),max.overlaps = 20, size=2)+
   theme_test() + labs(x=paste0("PC1 (",pc1,"%)"),y=paste0("PC2 (",pc2,"%)"), shape="Location", color="Reef")
 ```
 
