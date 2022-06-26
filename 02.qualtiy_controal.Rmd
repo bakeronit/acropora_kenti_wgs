@@ -106,22 +106,28 @@ mdust reference.fasta -c |cut -f1,3,4 > reference.mdust.bed
 bedtools subtract -a reference_mappability_K50_E2.unique.bed -b reference.mdust.bed
 ```
 
-After this, 261,651,886 bp left.
+After this, 262,753,617 bp left.
 
 ### 3.Global depth
 
-Genome regions with a lot of reads mapped or very little reads mapped should also be excluded in our analysis to avoid bias. We used `ANGSD` to calculate mapping depth of all samples across those genomic regions.
+Genome regions with a lot of reads mapped or very little reads mapped should also be excluded in our analysis to avoid bias. We used `ANGSD` to calculate mapping depth of all samples across filtered genomic regions. Next, we used 1% quantile and 99% quantile as lower and upper threshold depth in the following genotype likelihood estimate.
 
 ```bash
-angsd sites index reference_mappability_K50_E2.unique.bed
-angsd -minMapQ 30 -minQ 30 -doCounts 1 -doDepth 1 -dumpCounts 1 -maxdepth 3000 -b ind215_bam.list -out atenius  -nThreads 20 -sites reference_mappability_K50_E2.unique.bed
+angsd sites index reference_mappability_K50_E2.unique_mdust.bed
+angsd -minMapQ 30 -minQ 30 -doCounts 1 -doDepth 1 -dumpCounts 1 -maxdepth 3000 -b ind215_bam.list -out atenius  -nThreads 20 -sites reference_mappability_K50_E2.unique_mdust.bed
 ```
 
 ```{r}
 g_depth <- read_table2("data/hpc/qc/reference_filtering/depth/atenius.depthGlobal", col_names = F, col_types = cols("X3002"=col_skip()))
 g_depth_cumsum<-cumsum(as.numeric(g_depth))
-q95 <- g_depth_cumsum[length(g_depth_cumsum)]*0.95
-q05 <- g_depth_cumsum[length(g_depth_cumsum)]*0.05
-q95.threshold <- min(which(g_depth_cumsum > q95))
-q05.threshold <- min(which(g_depth_cumsum > q05))
+q99 <- g_depth_cumsum[length(g_depth_cumsum)]*0.99
+q01 <- g_depth_cumsum[length(g_depth_cumsum)]*0.01
+q99.threshold <- min(which(g_depth_cumsum > q99))
+q01.threshold <- min(which(g_depth_cumsum > q01))
+
+plot(g_depth %>% t(),type="l",xlab = 'Global depth (count)', ylab = 'Number of sites')
+abline(v = q99.threshold, col='red', lty=2)
+abline(v = q01.threshold, col='red', lty=2)
+legend('topright', legend = c(paste('1% thres:', q01.threshold, sep=''), paste('99% thres: ', q99.threshold, sep='')),  bty = "n")
+
 ```
