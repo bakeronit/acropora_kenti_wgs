@@ -1,5 +1,5 @@
 ---
-title: "Sample and reference filtering"
+title: "Quality control: sample and reference filtering"
 output: github_document
 ---
 
@@ -38,9 +38,9 @@ ggtree(tree,color="firebrick") + geom_tiplab(aes(color=pop),size=1.1) + scale_co
 
 We thus excluded these 10 samples in this step.
 
-### Identification of relatives
+### 2.Identification of relatives
 
-As clones or close related individuals could confound the results, we used `ngsRelate` to calculate the pairwise relatedness of all samples and remove one from any related sample pairs. We firstly did a preliminary angsd genotype likelihood computation for common polymorphic sites (maf>0.05, SNP p_value <1e-6) and limited to sites with a minimal base quality of 30 and with reads of minimal mapping quality of 30.
+As clones or close related individuals could confound the results, we used `ngsRelate` to calculate the pairwise relatedness of all samples and remove one from any related sample pairs. We firstly did a preliminary angsd genotype likelihood computation for common polymorphic sites (MAF>0.05, SNP p_value <1e-6) and limited analysis to sites with a minimal base quality of 30 and reads with a minimal mapping quality of 30.
 
 ```bash
 angsd -ref reference.fasta -b all_bam.list -GL 2 -doGlf 2 \
@@ -51,20 +51,14 @@ zcat atenius.mafs.gz | cut -f 5 |sed '1d' > freq
 ngsRelate -G atenius.beagle.gz -n 228 -f freq -p 30 -l 0.05 -O atenius.ngsrelate.txt
 ```
 
-We then plotted the combinations of R0,R1 and R1-KING-robust kinship statistics of each pair of samples to infer relationships follow the methods in https://onlinelibrary.wiley.com/doi/10.1111/mec.14954.
+We then plotted the combinations of R0,R1 and R1-KING-robust kinship statistics of each pair of samples to infer relationships follow the methods in [Ryan K. Waples et al. 2018](https://onlinelibrary.wiley.com/doi/10.1111/mec.14954).
 
-There are three pairwise values clear deviated from the main cluster and are potential FS/OF relationship. These outliers are from Magnetic Island , we thus kept one with higher coverage from each pair in the following analysis. They have KING-robust kinship > 0.397, R1>1.94, R0<0.000016.
+There are three pairwise values clearly deviated from the main cluster and are potential FS/OF relationship. These samples are from Magnetic Island , we then kept one with higher coverage (bold) from each pair in the following analysis. They all have KING-robust kinship > 0.397, R1>1.94, R0<0.000016.
 
- - 117-119 (MI-2-21_S5, MI-2-24_S36)
- - 111-123 (MI-1-6_S37, MI-2-3_S13)
- - 103-127 (MI-1-16_S8, MI-2-9_S25)
+ - 117-119 (MI-2-21_S5, **MI-2-24_S36**)
+ - 111-123 (**MI-1-6_S37**, MI-2-3_S13)
+ - 103-127 (MI-1-16_S8, **MI-2-9_S25**)
  
- samples to remove (the one with lower sequencing depth from each pair):
- 
- - MI-2-21_S5
- - MI-2-3_S13
- - MI-1-16_S8
-
 ```{r fig.show="hold", out.width="50%"}
 excluded_samples <- c("ARL_13_S67","ARL_14_S68","ARL_1_S61","ARL_20_S73","ARL_21_S74","ARL_22_S75","ARL_23_S76","ARL_3_S63","ARL_5_S65","JB_5_S5")
 
@@ -84,7 +78,7 @@ ggplot(res,aes(x=R1,y=KING,label=name)) + geom_point(color="blue3",size=1) +
   geom_text_repel(data=res %>% filter(R0<0.00002), size=2.5) + theme_pubr()
 ```
 
-After this, we left 215 samples to go.
+Eventually, we left 215 samples to go.
 
 ## Reference filtering
 
@@ -98,7 +92,7 @@ genmap map -K 50 -E 2 -I genmap_index -O reference_mappability_K50_E2 -t -w -bg
 awk '$4==1{print $1"\t"$2"\t"$3}' reference_mappability_K50_E2.bedgraph > reference_mappability_K50_E2.unique.bed
 ```
 
-There were 264,895,970 bp left.
+There were 266,991,395 bp genomic regions left.
 
 
 ### 2.Simple repeat regions
@@ -110,11 +104,11 @@ mdust reference.fasta -c |cut -f1,3,4 > reference.mdust.bed
 bedtools subtract -a reference_mappability_K50_E2.unique.bed -b reference.mdust.bed > reference_mappability_K50_E2.unique_mdust.bed
 ```
 
-After this, 263,812,390 bp left.
+After removing regions with simple short repeats, we left 263,812,390 bp.
 
 ### 3.Global depth
 
-Genome regions with a lot of reads mapped or very little reads mapped should also be excluded in our analysis to avoid bias. We used `ANGSD` to calculate mapping depth of all samples across filtered genomic regions with minMapQ>30 and minQ >30. Next, we used 1% quantile and 99% quantile global depth values as lower and upper threshold depth in the following genotype likelihood estimate.
+Genome regions with a lot of reads mapped or very little reads mapped should also be excluded in our analysis to avoid bias. We used `ANGSD` to calculate mapping depth of all samples across filtered genomic regions with minMapQ>30 and minQ >30. We used 1% quantile and 99% quantile global depth values as lower and upper threshold depth in the following genotype likelihood estimate.
 
 ```bash
 angsd sites index reference_mappability_K50_E2.unique_mdust.bed
@@ -135,3 +129,5 @@ abline(v = q01.threshold, col='red', lty=2)
 legend('topright', legend = c(paste('1% thres:', q01.threshold, sep=''), paste('99% thres: ', q99.threshold, sep='')),  bty = "n")
 
 ```
+
+Eventually, we removed scaffolds with a length shorter than 1Mb, and resulted in 263,710,454 accessible bases in A.tenius reference genome assembly.
