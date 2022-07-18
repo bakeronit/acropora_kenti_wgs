@@ -9,4 +9,16 @@ Analysis and code including in this project
 
 ### Population genetics analysis based on coral variants
 
+- [PCA and admixture analysis](04.population_structure.md)
+- [IBS tree](05.IBS-tree.md)
+- [Population statistics]
+- [EEMS]
+
+### Selection analysis
+
+- [selection based on pcangsd]
+
+###
+
+- [2dSFS]
 

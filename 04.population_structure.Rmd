@@ -100,7 +100,8 @@ ggplot(pop_pca23_unlinked, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_
   scale_color_manual(values = site_colors(), labels=site_labels()) + 
   theme_test() + labs(x=paste0("PC2 (",pc2,"%)"),y=paste0("PC3 (",pc3,"%)"), shape="Location", color="Reef")
 ```
-A minor disconnected in North reefs were observed but the results are very similar.
+
+A minor discontinuity was in north reefs samples were observed but the results were similar.
 
 
 ```{r}
