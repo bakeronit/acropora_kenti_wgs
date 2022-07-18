@@ -4,5 +4,5 @@
 .Rhistory
 .RData
 .Ruserdata
-.data/hpc/*
-.data/*
+data/hpc/*
+data/*
