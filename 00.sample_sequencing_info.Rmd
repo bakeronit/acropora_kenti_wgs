@@ -14,40 +14,37 @@ source("scripts/my_color.R")
 
 
 ```{r map}
-include_graphics("figures/Atenius-sampling-googlemaps.png")
+include_graphics("figures/Atenius-sampling.png")
 
 ```
 
 
-**TODO:** A better map
+ *Acropora tenius* corals were collected from both inshore and offshore Great Barrier Reef (GBR) at 9 reef locations.
 
-
-We sampled *Acropora tenius* corals from both inner and outer Great Barrier Reef (GBR) at 9 locations.
-
-- Inner reefs
+- Inshore reefs
   - Magnetic Island (MI, n=28)
   - Pandora Reef (PR, n=30)
   - Pelorus Island (PI, n=30)
   - Dunk Island (DI, n=30)
   - Fitzroy Island (FI, n=30)
 
-> There were two samples (FI-1-3, MI-1-4) been sequenced at higher depths. We mapped all reads from them to reference genome assembly and down-sampled to average depth randomly from their bam files.
-
-- Outer reefs
+- Offshore reefs
   - Arlington Reef (ARL, n=20)
   - Taylor Reef (TAY, n=20)
   - Rib Reef (RIB, n=20)
   - John Brewer Reef (JB, n=20)
 
-The extracted DNA was sequenced at shallow depth **(~1-5x)** with 100bp paired sequences. Some samples were sequenced in multiple lines or flowcells, thus, one sample has several fastq files.
+The extracted DNA was sequenced at shallow depth **(~2-5x)** with 100bp paired sequences. Some samples were sequenced in multiple lines or flowcells, thus, one sample has several fastq files.
 
-- **Inner reefs data from Cooke et al 2020**
+> There were two samples (FI-1-3, MI-1-4) been sequenced at higher depths. We mapped all reads from them to reference genome assembly and down-sampled to average depth randomly from their bam files.
 
-  Sample were sequenced from 2 lanes with paired reads, thus, composed of 592 fastq files.
+- **Data of inshore reefs from Cooke et al 2020**
 
-- **Outer reefs data from AIMS**
+  Each sample was sequenced in 2 lanes with paired-end reads, thus, 592 fastq files were generated from 148 samples.
 
-  80 samples, each with 2 lanes and 2 batches, from 640 fastq files.
+- **Data of offshore reefs from AIMS**
+
+  80 samples, each with 2 lanes and 2 batches, form 640 fastq files.
 
 List of filenames and sample info table can be found [here](https://docs.google.com/spreadsheets/d/1sArk4d6xUXZzDHxBPvQEfcudYWERo7W7Xp-Va3FbQeE/edit?usp=sharing)
 
@@ -65,7 +62,7 @@ df %>% ggplot(aes(x=reorder(pop,pop_order),y=total_bases/1e+9,color=pop)) +
   theme_pubclean()+labs(x="",y="Total base (Gb)")
 ```
 
-*Notice that samples from Magnetic Island have less data and samples from outer reefs have slightly more data than samples from inner reefs*
+*Notice that samples from Magnetic Island have least data sequenced and samples from offshore reefs have slightly more data than samples from inshore reefs*
 
 
 
