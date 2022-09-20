@@ -26,14 +26,17 @@ blastn -task megablast -db nt -query {sample}_mito.fa -remote -outfmt  '6 qseqid
 
 Next, we build a tree using iqtree with these sequences. There are 9 samples from Arlington reef and 1 from John Brewer Reef form a separate cluster from other samples. As we included mitogenome of *A.tenuis* and *A.echinata*, this is consistent with our blast results as 8 ARL samples and 1 JB samples matched with *A.echinata* and 1 ARL sample matched to *A.florida*.
 
-```{r, fig.height=6.8, fig.width=5}
+```{r,fig.width=6.75}
 treefile <- "data/hpc/qc/sample_filtering/mitogenome/all_mito.aln.fasta.treefile"
 tree <-read.tree(treefile)
 tree<- midpoint.root(tree) 
 df <- data.frame(label=tree$tip.label, pop=map_chr(tree$tip.label %>% str_split("_|-"), first))
 tree <- full_join(tree,df,by='label') 
 
-ggtree(tree,color="firebrick") + geom_tiplab(aes(color=pop),size=1.1) + scale_color_manual(values = site_colors(), guide=F)
+#ggtree(tree,color="firebrick",layout = "fan",open.angle = 120) + geom_tiplab(aes(color=pop),size=2.5) + 
+ggtree(tree,color="firebrick") + geom_tiplab(aes(color=pop),size=2.5) +
+  scale_color_manual(values = site_colors(), guide="none") +
+  theme_tree()
 ```
 
 We thus excluded these 10 samples in this step.
@@ -53,7 +56,7 @@ ngsRelate -G atenius.beagle.gz -n 228 -f freq -p 30 -l 0.05 -O atenius.ngsrelate
 
 We then plotted the combinations of R0,R1 and R1-KING-robust kinship statistics of each pair of samples to infer relationships follow the methods in [Ryan K. Waples et al. 2018](https://onlinelibrary.wiley.com/doi/10.1111/mec.14954).
 
-There are three pairwise values clearly deviated from the main cluster and are potential FS/OF relationship. These samples are from Magnetic Island , we then kept one with higher coverage (bold) from each pair in the following analysis. They all have KING-robust kinship > 0.397, R1>1.94, R0<0.000016.
+There are eight pairwise values clearly deviated from the main cluster and are potential FS/OF relationship. These samples are from Magnetic Island , we then kept one with higher coverage (bold) from each pair in the following analysis. They all have KING-robust kinship > 0.2998, R1>0.766, R0<0.005.
 
  - 117-119 (MI-2-21_S5, **MI-2-24_S36**)
  - 111-123 (**MI-1-6_S37**, MI-2-3_S13)
@@ -74,13 +77,18 @@ names(sample_ids) <- samples
 res <- read_tsv("data/hpc/qc/sample_filtering/relatedness/atenius.ngsrelate.txt") %>% 
   select(a,b,R0,R1,KING) %>% mutate(a_name=names(sample_ids[a+1]),b_name=names(sample_ids[b+1]), type=ifelse(substr(a_name,1,3)==substr(b_name,1,3),"within","between"),name=paste(a_name,b_name,sep = " - ")) %>% filter(!a_name %in% excluded_samples,! b_name %in% excluded_samples)
 
-ggplot(res,aes(x=R1,y=R0,label=name)) + geom_point(color="blue3",size=1)+
+p1<-ggplot(res,aes(x=R1,y=R0,label=name)) + geom_point(color="blue3",size=1)+
   geom_point(data=res %>% filter(KING>0.25),size=1,color="red") +
-  geom_text_repel(data=res %>% filter(KING>0.25), size=2.5) + theme_pubr()
+  geom_text_repel(data=res %>% filter(KING>0.25), size=2.5) + theme_pubr(base_size = 12)
 
-ggplot(res,aes(x=R1,y=KING,label=name)) + geom_point(color="blue3",size=1) + 
+p2<-ggplot(res,aes(x=R1,y=KING,label=name)) + geom_point(color="blue3",size=1) + 
   geom_point(data=res %>% filter(KING>0.25),size=1,color="red") +
-  geom_text_repel(data=res %>% filter(KING>0.25), size=2.5) + theme_pubr()
+  geom_text_repel(data=res %>% filter(KING>0.25), size=2.5) + theme_pubr(base_size = 12)
+p1
+p2
+
+#cowplot::plot_grid(p1,p2,align = "h",ncol = 2,labels = c("(a)","(b)"),label_size = 12) %>% 
+#  ggsave(filename = "supplementary-fig3.png",device = "png",dpi = 300,width = 6.8,height = 3)
 
 res %>% arrange(desc(KING)) %>% head(n=8) %>% select(a,b,name)
 ```
@@ -122,7 +130,7 @@ angsd sites index reference_mappability_K50_E2.unique_mdust.bed
 angsd -minMapQ 30 -minQ 30 -doCounts 1 -doDepth 1 -dumpCounts 1 -maxdepth 3000 -b ind215_bam.list -out atenius  -nThreads 20 -sites reference_mappability_K50_E2.unique_mdust.bed
 ```
 
-```{r}
+```{r,fig.width=6.2}
 g_depth <- read_table2("data/hpc/qc/reference_filtering/depth/atenius.unique_mdust.ind212.depthGlobal", col_names = F, col_types = cols("X3002"=col_skip()))
 g_depth_cumsum<-cumsum(as.numeric(g_depth))
 q99 <- g_depth_cumsum[length(g_depth_cumsum)]*0.99

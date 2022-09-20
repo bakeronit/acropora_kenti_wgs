@@ -1,0 +1,131 @@
+---
+title: "Evaluate the effect of window size and missing data in genome-wide summary statistics"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.retina = 2)
+library(tidyverse)
+library(ggpubr)
+library(knitr)
+source("scripts/my_color.R")
+
+offsets <- read_tsv("data/hpc/ragtag/ragtag.scaffold_lengths.txt", col_names = c("chr","length"),show_col_types = FALSE) %>% 
+  arrange(desc(length)) %>%
+  mutate(offset=lag(cumsum(length),default=0)) %>% 
+  mutate(scaffold_num=row_number())
+```
+
+Genome-wide estimates of divergence/diversity usually carried out by summarising genetic statistics in windows. These window-based statistics not only reduce the size of data, but also provide a grouped value of a region reflecting the biological meaning of linked selection. However, the size of window used in studies are different, usually range from 10kb to 200kb. A big factor is the contiguity of the genome assembly, since you can't extract many windows in fragmented scaffolds. Also, known recombination rate could be a good guide for choosing window sizes. Since it isn't always available for non-model organisms, we try evaluate the effect of using different window size in genome-wide scanning.
+
+Here, we used three sizes of windows 50kb, 20kb,and 10kb with a jump size of 10kb, 4kb,and 2kb. Using sliding windows can better capture those signals extended out from windows.
+
+```bash
+realSFS fst stats2 inshore_offshore.fst.idx -win 50000 -step 10000 -type 1 > inshore_offshore.w50s10.fst
+realSFS fst stats2 inshore_offshore.fst.idx -win 20000 -step 4000 -type 1 > inshore_offshore.w20s4.fst
+realSFS fst stats2 inshore_offshore.fst.idx -win 10000 -step 2000 -type 1 > inshore_offshore.w10s2.fst
+```
+
+### Fst
+
+```{r, fig.height=3}
+fst50 <- read_table("data/hpc/window_size/inshore_offshore.w50s10.fst.ragtag.txt",col_names = c("chr","pos","Nsites","fst")) %>% add_column(size="50kb")
+fst20 <- read_table("data/hpc/window_size/inshore_offshore.w20s4.fst.ragtag.txt",col_names = c("chr","pos","Nsites","fst")) %>% add_column(size="20kb")
+fst10 <- read_table("data/hpc/window_size/inshore_offshore.w10s2.fst.ragtag.txt",col_names = c("chr","pos","Nsites","fst")) %>% add_column(size="10kb")
+
+fst_df<- rbind(fst50,fst20,fst10) %>% mutate(fst=ifelse(fst<0,0,fst),covered=case_when(size=="50kb"~Nsites/50000,size=="20kb"~Nsites/20000,size=="10kb"~Nsites/10000))
+
+fst_df %>% ggplot(aes(x=fst)) + geom_density() + facet_wrap(~size,scales = "free") + theme_bw() + labs(x="Window-based Fst",y="Density")
+
+fst_df %>% #filter(covered>0.5) %>% 
+  group_by(size) %>% summarise("Average Fst"=mean(fst))
+```
+
+**Figure 1.** The density distribution of window-based Fst estimates
+
+It seems they have quite similar estimates of average Fst across the genome, but we saw longer tails for data from smaller window sizes.
+
+Since some of those extreme Fst values are from windows with a lot of missing data, we plotted the window-based Fst values along the chromosomes with three filtering thresholds for missing data: 10%, 50%, 80%.
+
+- **0.No filtering**
+
+```{r}
+fst_df %>% 
+  left_join(offsets) %>% mutate(abs_pos=pos+offset) %>% #filter(covered>0.5) %>% 
+  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplanced")) %>% 
+  ggplot(aes(x=abs_pos/1e+6,y=fst,color=chr_type)) + geom_point(size=1,alpha=.6) +
+  labs(x="",y="") + scale_color_manual(values = c("#6caeff","#2b5d9b","grey"),guide="none") + 
+  theme_classic(base_size = 12) + theme(axis.ticks.x = element_blank(), axis.text.x = element_blank()) + facet_wrap(~size,ncol = 1,scales = "free_y")
+```
+
+**Figure 2** Manhattan plot of Fst across the genome with no filter on missing data
+
+- **1. <90% of missing data (at least 10% of the window covered)**
+
+```{r}
+fst_df %>% 
+  left_join(offsets) %>% mutate(abs_pos=pos+offset) %>% filter(covered>0.1) %>%
+  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplanced")) %>% 
+  ggplot(aes(x=abs_pos/1e+6,y=fst,color=chr_type)) + geom_point(size=1,alpha=.6) +
+  #geom_point(data = fst_df %>% left_join(offsets) %>% mutate(abs_pos=pos+offset) %>%group_by(size) %>%filter(covered>0.1) %>%  mutate(q=quantile(fst,0.9999)) %>% filter(fst>q),color="red")+
+  labs(x="",y="") + scale_color_manual(values = c("#6caeff","#2b5d9b","grey"),guide="none") + 
+  theme_classic(base_size = 12) + theme(axis.ticks.x = element_blank(), axis.text.x = element_blank()) + facet_wrap(~size,ncol = 1,scales = "free_y")
+```
+
+**Figure 3** Manhattan plot of Fst across the genome excluding windows with more than 90% of missing data
+
+
+- **2. <50% of missing data**
+
+```{r}
+fst_df %>% 
+  left_join(offsets) %>% mutate(abs_pos=pos+offset) %>% filter(covered>0.5) %>% 
+  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplanced")) %>% 
+  ggplot(aes(x=abs_pos/1e+6,y=fst,color=chr_type)) + geom_point(size=1,alpha=.6) +
+  labs(x="",y="") + scale_color_manual(values = c("#6caeff","#2b5d9b","grey"),guide="none") + 
+  theme_classic(base_size = 12) + theme(axis.ticks.x = element_blank(), axis.text.x = element_blank()) + facet_wrap(~size,ncol = 1,scales = "free_y")
+```
+
+**Figure 4** Manhattan plot of Fst across the genome excluding windows with more than 50% of missing data
+
+Results from 50kb window size seems able to capture strong signals and differentiate them from the background. For missing data filtering, apparently, with more stringent thresholds, our plots got sparse because lots of windows were excluded. The point it to keep it not crazily stringent so we can have more data while preventing false signals. Here, we plotted the proportion of data in a window covered verses the Fst values. It shows that a threshold of 5% (allow 95% missing data in a window) are able to exclude most false high Fst statistics.
+Interestingly, it also reflects that using 50kb window size better capture the outliers which are potential regions under selection.
+
+
+```{r, fig.height=3}
+fst_df %>% ggplot(aes(y=fst,x=covered)) + geom_point(color="grey3",alpha=.6) + 
+  facet_wrap(~size,scales = "free") + geom_vline(xintercept = 0.05,color="red")+annotate("text", -Inf, Inf, label="5% covered",hjust=-.3,vjust=2)+
+  theme_bw(base_size = 12) + labs(x="Proportion of bases with data",y="Fst value")
+```
+
+**Figure 5** The Fst estimates from windows with different proportion of covered data.
+
+
+### For genetic diversity
+
+```{r, fig.height=3}
+theta50<-read_table("data/hpc/window_size/north.w50s10.theta.pestPG.ragtag.txt",col_names = c("chr","pos","tw","tp","tajima","nsites")) %>% add_column(size="50kb")
+theta20<-read_table("data/hpc/window_size/north.w20s4.theta.pestPG.ragtag.txt",col_names = c("chr","pos","tw","tp","tajima","nsites")) %>% add_column(size="20kb")
+theta10<-read_table("data/hpc/window_size/north.w10s2.theta.pestPG.ragtag.txt",col_names = c("chr","pos","tw","tp","tajima","nsites")) %>% add_column(size="10kb")
+
+theta_df <- rbind(theta50,theta20,theta10) %>% mutate(tw=tw/nsites,tp=tp/nsites,covered=case_when(size=="50kb"~nsites/50000,size=="20kb"~nsites/20000,size=="10kb"~nsites/10000)) %>% na.omit()
+
+theta_df %>% ggplot(aes(x=covered,y=tp)) + geom_point(color="grey3",alpha=.6)+ 
+  facet_wrap(~size,scales = "free") + geom_vline(xintercept = 0.05,color="red") + annotate("text", -Inf, Inf, label="5% covered",hjust=-.3,vjust=2)+
+  labs(x="Proportion of covered data",y="Nucleotide diversity(pi)") + theme_bw(base_size = 12)
+```
+
+**Figure 6** The Nucleotide diversity estimates from windows with different proportion of covered data.
+
+Similarly, those extreme values are all from windows with a lot of missing data and they affect the average values of pi. However, the rest of the genome seems to have a very even distribution of nucleotide diversity which also reflected in manhattan plot with 0.05 filtering. This suggests that there is unlikely any regions in the genome with extreme high genetic diversity.
+
+```{r}
+theta_df %>% left_join(offsets) %>% mutate(abs_pos=pos+offset) %>% filter(covered>0.05) %>% 
+  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplanced")) %>% 
+  ggplot(aes(x=abs_pos/1e+6,y=tp,color=chr_type)) + geom_point(size=1,alpha=.6) +
+  #geom_point(data=left_join(fst_df,theta_df,by=c("chr","pos","size"))%>% left_join(offsets) %>% mutate(abs_pos=pos+offset) %>%group_by(size) %>%filter(covered.x>0.1) %>%  mutate(q=quantile(fst,0.9999)) %>% filter(fst>q),aes(x=abs_pos/1e+6,y=tp),color="red",size=1) +
+  labs(x="",y="") + scale_color_manual(values = c("#6caeff","#2b5d9b","grey"),guide="none") + 
+  theme_classic(base_size = 12) + theme(axis.ticks.x = element_blank(), axis.text.x = element_blank()) + facet_wrap(~size,ncol = 1,scales = "free_y")
+```
+
+**Figure 7** Manhattan plot of nucleotide diversity(pi) across the genome excluding windows with more than 95% of missing data

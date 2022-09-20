@@ -1,5 +1,5 @@
 ---
-title: "PCA analysis"
+title: "Population structure: PCA analysis and Admixture"
 output: github_document
 ---
 
@@ -14,7 +14,7 @@ source("scripts/my_color.R")
 ```
 
 
-### PCA and admixture analysis
+### PCAngsd analysis
 
 We firstly used pcangsd to calculate covariance of all SNPs and plotted the first two principles. The strongest variance was observed between samples from MI and all the other north reefs. The samples from north reefs seems form a big cluster without any clustering pattern with only internal genetic diversity reflected along PC2. We also identified 4 potential hybrids, consistently in PCA plot and Admixture plot. These hybrids were excluded in selection analysis, IBS tree, and demographic modelling.
 
@@ -31,7 +31,7 @@ colnames(covmat)<- sample_ids
 rownames(covmat) <- sample_ids
 
 pop_eigen <- eigen(covmat)
-sample_table <- read_csv("data/hpc/qc/summary_data.csv",show_col_types = FALSE) %>% select(sample_id,pop,location,reef)
+sample_table <- read_csv("data/hpc/qc/summary_data.csv",show_col_types = FALSE) %>% select(sample_id,pop,location,reef) %>% mutate(reef=ifelse(reef=="Outer","Offshore","Inshore"))
 
 pop_pca12 <- data.frame(x=pop_eigen$vectors[,1],y=pop_eigen$vectors[,2],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
 pop_pca23 <- data.frame(x=pop_eigen$vectors[,2],y=pop_eigen$vectors[,3],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
@@ -43,11 +43,11 @@ ggplot(pop_pca12, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order),sh
   geom_text_repel(data=pop_pca12 %>% filter(sample_id %in% c("MI-1-1_S10","PI-1-16_S16","DI-2-4_S17","ARL_15_S69")),aes(x=x,y=y,label=sample_id),size=2,hjust=2,vjust=1) + 
   geom_point(data=pop_pca12 %>% filter(sample_id %in% c("MI-1-1_S10","PI-1-16_S16","DI-2-4_S17","ARL_15_S69")),aes(x=x,y=y),size=.8,color="black") +
   scale_color_manual(values = site_colors(), labels=site_labels()) + 
-  theme_test() + labs(x=paste0("PC1 (",pc1,"%)"),y=paste0("PC2 (",pc2,"%)"), shape="Location", color="Reef")
+  theme_test(base_size = 12) + labs(x=paste0("PC1 (",pc1,"%)"),y=paste0("PC2 (",pc2,"%)"), shape="Location", color="Reef")
 
 ggplot(pop_pca23, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+
   scale_color_manual(values = site_colors(), labels=site_labels()) + 
-  theme_test() + labs(x=paste0("PC2 (",pc2,"%)"),y=paste0("PC3 (",pc3,"%)"), shape="Location", color="Reef")
+  theme_test(base_size = 12) + labs(x=paste0("PC2 (",pc2,"%)"),y=paste0("PC3 (",pc3,"%)"), shape="Location", color="Reef")
 
 hybrids <-c("MI-1-1_S10","PI-1-16_S16","DI-2-4_S17","ARL_15_S69")
 ```
@@ -65,13 +65,14 @@ p1 <- ggplot(q2_admixture ,aes(x=reorder(sample_id,pop_order),y=proportion)) +
   facet_grid(reorder(location,desc(pop_order))~., scales = "free_y") + coord_flip() + theme_pubclean() + labs(x="",y="Proportion (K=2)") + 
   scale_fill_brewer(palette = "Set2") + 
   scale_color_brewer(palette = "Set2") + 
-theme(axis.text.y = element_blank(),
+  theme_minimal() +
+  theme(axis.text.y = element_blank(),
         legend.position = "none", 
         axis.ticks = element_blank(),
         panel.border = element_blank(), 
         panel.background = element_blank(),
-        panel.grid.minor = element_blank(),
-        strip.text = element_text(size=12))
+        panel.grid = element_blank(),
+        strip.text.y = element_text(size=12,angle = 0,hjust=-0.1))
 p1
 ```
 
@@ -113,15 +114,66 @@ q2_admixture_unlinked <- read_table("data/hpc/pca/atenius.ld_pruned_snps.pcangsd
 
 p1 <- ggplot(q2_admixture_unlinked ,aes(x=reorder(sample_id,pop_order),y=proportion)) + 
   geom_bar(aes(fill=cluster,color=cluster),stat="identity") + 
-  facet_grid(reorder(location,desc(pop_order))~., scales = "free_y") + coord_flip() + theme_pubclean() + labs(x="",y="Proportion (K=2)") + 
+  facet_grid(reorder(location,desc(pop_order))~., scales = "free") + coord_flip() + theme_pubclean() + labs(x="",y="Proportion (K=2)") + 
   scale_fill_brewer(palette = "Set2") + 
   scale_color_brewer(palette = "Set2") + 
-theme(axis.text.y = element_blank(),
+  theme_minimal() +
+  theme(axis.text.y = element_blank(),
         legend.position = "none", 
         axis.ticks = element_blank(),
         panel.border = element_blank(), 
         panel.background = element_blank(),
-        panel.grid.minor = element_blank(),
-        strip.text = element_text(size=12))
+        panel.grid = element_blank(),
+        strip.text.y  = element_text(size=12,angle =0,hjust = -0.1))
 p1
+```
+
+### Admixture analysis
+
+The individual admixture proportion was also inferred by `NGSAdmix` with K set to 2 and 3.
+
+```bash
+NGSadmix -likes atenius.ind212.unique_mdust1M.beagle.gz -K 2 -outfiles atenius.ind212.unique_mdust1M.K2 -P 20 -minMaf 0.05 -minInd 100
+NGSadmix -likes atenius.ind212.unique_mdust1M.beagle.gz -K 3 -outfiles atenius.ind212.unique_mdust1M.K3 -P 20 -minMaf 0.05 -minInd 100
+
+NGSadmix -likes atenius.ld_pruned_snps.beagle.gz -K 2 -outfiles atenius.ld_pruned_snps.K2 -P 20 -minMaf 0.05 -minInd 100
+NGSadmix -likes atenius.ld_pruned_snps.beagle.gz -K 3 -outfiles atenius.ld_pruned_snps.K3 -P 20 -minMaf 0.05 -minInd 100
+```
+The results from all snps were presented here.
+
+```{r, fig.width=12,fig.height=3}
+qopt2 <- read_table("data/hpc/ngsAdmix/atenius.ind212.unique_mdust1M.K2.qopt",col_names = c("X1","X2")) %>% 
+  add_column(sample_id = sample_ids) %>% gather(cluster, proportion, -sample_id) %>% left_join(sample_table) %>% mutate(pop_order = site_order()[pop])
+qopt3 <- read_table("data/hpc/ngsAdmix/atenius.ind212.unique_mdust1M.K3.qopt",col_names = c("X1","X2","X3")) %>%
+  add_column(sample_id = sample_ids) %>% gather(cluster, proportion, -sample_id) %>% left_join(sample_table) %>% mutate(pop_order = site_order()[pop])
+
+
+ggplot(qopt2,aes(x=sample_id,y=proportion,fill=cluster)) + scale_fill_manual(values = c("white","black"),guide="none")+
+  geom_col(color="darkgrey",size=0.1) +
+  facet_grid(~reorder(location,pop_order), switch = "x",scales = "free",space = "free") + 
+  theme_minimal() + scale_y_continuous(expand = c(0,0)) +
+  scale_x_discrete(expand = expand_scale(add=1))+
+  labs(x = "", title = "K=2", y = "Ancestry")+
+  #scale_y_reverse(labels = c("0","0.25","0.5","0.75","1"),expand=c(0,0)) +
+  theme(panel.spacing.x = unit(0.1,"lines"),
+        axis.text.x = element_blank(),
+        panel.grid = element_blank(),
+        #strip.text.x = element_blank(),
+        axis.text.y = element_text(angle=270,hjust = 0.5),
+        axis.title.y = element_text(angle = 270))
+
+#ggsave("ngsAdmix.png",width = 6.3,height = 1.6)
+
+ggplot(qopt3,aes(x=reorder(sample_id,pop_order),y=proportion,fill=cluster)) + #scale_fill_manual(values = c("black","lightgrey"))+
+  geom_col(color="white",size=0.1) +
+  facet_grid(~reorder(location,pop_order), switch = "x",scales = "free",space = "free") + 
+  theme_minimal() + scale_y_continuous(expand = c(0,0)) +
+  scale_x_discrete(expand = expand_scale(add=1))+
+  labs(x = "Individuals", title = "K=3", y = "Ancestry")+
+  theme(panel.spacing.x = unit(0.1,"lines"),
+        axis.text.x = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "none")
+
+
 ```
