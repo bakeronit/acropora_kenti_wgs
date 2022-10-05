@@ -38,3 +38,25 @@ nj_tree <- full_join(nj_tree,df,by='label')
 ggtree(nj_tree) + geom_tiplab(aes(color=pop),size=1.6) + scale_color_manual(values = site_colors(), guide=F)
 
 ```
+
+We also used this iBS matrix in EEMS without using samples from Magnetic Island. However, these is not big variation in ibs distances. 
+
+```{r}
+ibs_190 <- ibs_matrix[-grep(rownames(ibs_matrix),pattern = "MI"),-grep(rownames(ibs_matrix),pattern = "MI")]
+heatmap(ibs_190,symm = T)
+
+```
+
+
+
+```{r}
+
+library(rEEMSplots)
+mcmcpath <- "data/hpc/eems/atenuis_eems-chain1"
+plotpath <- "eems"
+Sys.setenv(R_GSCMD = "/opt/homebrew/bin/gs")
+
+eems.plots(mcmcpath, plotpath, longlat = TRUE)
+```
+
+

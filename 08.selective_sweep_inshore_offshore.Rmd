@@ -1,0 +1,279 @@
+---
+title: "Signature of selection in inshore and offshore reefs"
+output: github_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.retina = 2)
+library(tidyverse)
+library(ggpubr)
+library(knitr)
+source("scripts/my_color.R")
+
+offsets <- read_tsv("data/hpc/ragtag/ragtag.scaffold_lengths.txt", col_names = c("chr","length"),show_col_types = FALSE) %>% 
+  arrange(desc(length)) %>%
+  mutate(offset=lag(cumsum(length),default=0)) %>% 
+  mutate(scaffold_num=row_number())
+
+cbp1 <- c("#E69F00", "#56B4E9", "#009E73",
+          "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+```
+
+
+Despite no migration barrier and a lack of population structure between inshore and offshore reefs suggest they share a mix gene pool. However, the inshore and offshore habitat pose different environmental pressure to larvae and we are expecting to observe balance selection that main the overall nucleotide diversity whereas show differentiation between two populations.
+
+We conducted a series of scans for selective sweeps by identify regions with significant high nucleotide diversity (pi) or high divergence (Fst) between inshore and offshore.
+
+### 1. Site frequency spectrum estimate for inshore and offshore
+
+In this analysis, we only included samples from north GBR (118 from inshore, 69 from offshore) and we used realSFS within ANGSD to estimate the SFS for each group or pairwise 2DSFS of inshore and offshore. To make sure some loci were used in analysis, we firstly used ANGSD to estimate sfs for all 187 samples and set the similar filtering as before. We got the site index from the mafs file and then we limited the SFS estimate of inshore and offshore in these sites (202,829,504) without any further filtering.
+
+```bash
+angsd -bam all_187_bam.list -ref ${ref} -anc ${ref} -C 50 \
+       -GL 2 -doSaf 1 -sites ${bed} -doMaf 1 -doCounts 1 -minQ 30 -minMapQ 30 \
+       -nThreads 40 -uniqueOnly 1 -doMajorMinor 1 -out north_187_minInd100 -minInd 100
+
+zcat north_187_minInd100.mafs.gz|sed '1d'|cut -f1,2 > north_187_minInd100.sites
+angsd sites index north_187_minInd100.sites
+
+angsd -bam inshore118_bam.list -ref ${ref} -anc ${ref} -sites north_187_minInd100.sites \
+       -GL 2 -doSaf 1 -doMaf 1 -nThreads 40 -doMajorMinor 1 -out inshore
+
+angsd -bam offshore69_bam.list -ref ${ref} -anc ${ref} -sites north_187_minInd100.sites \
+       -GL 2 -doSaf 1 -doMaf 1 -nThreads 40 -doMajorMinor 1 -out offshore
+
+```
+
+### 2. Fst sliding-window stats
+
+Next, we used realSFS to do sliding-window statistic of Fst with a window size of 50kb and a jump size of 10kb through three steps. 
+
+1.realSFS was used to generate folded pairwise SFS with inshore and offshore SAF files. [how to folded?](https://github.com/ANGSD/angsd/issues/259)
+
+2.generate per-site numerator/denominator of Fst
+
+3.sum numerator and denominator in windows
+
+```bash
+realSFS -P 24 inshore.saf.idx offshore.saf.idx -fold 1 > inshore_offshore.folded.2dsfs
+realSFS fst index inshore.saf.idx offshore.saf.idx -sfs inshore_offshore.2dsfs -fold 1 -fstout inshore_offshore
+realSFS fst stats2 inshore_offshore.fst.idx -win 50000 -step 10000 -type 1 > inshore_offshore.w50s10.fst
+```
+
+### 3. genetic diversity stats
+
+We used realSFS and thetaStat within ANGSD to generate SFS, to estimate theta per site and to calculate neutrality test statistics, like Tajima's D, etc. in sliding windows for inshore, offshore,and overall, separately.
+
+```bash
+realSFS inshore.saf.idx -P 24 -fold 1 > inshore.folded.1dsfs
+realSFS saf2theta inshore.saf.idx -sfs inshore.folded.1dsfs -outname inshore -fold 1
+thetaStat do_stat inshore.thetas.idx -win 50000 -step 10000 -outnames inshore.w50s10.theta -type 1
+
+realSFS offshore.saf.idx -P 24 -fold 1 > offshore.folded.1dsfs
+realSFS saf2theta offshore.saf.idx -sfs offshore.folded.1dsfs -outname offshore -fold 1
+thetaStat do_stat offshore.thetas.idx -win 50000 -step 10000 -outnames offshore.w50s10.theta -type 1
+
+realSFS north_187_minInd100.saf.idx -P 24 -fold 1 > north.folded.1dsfs
+realSFS saf2theta north_187_minInd100.saf.idx -sfs north.folded.1dsfs -outname north -fold 1
+thetaStat do_stat north.thetas.idx -win 50000 -step 10000 -outnames north.w50s10.theta -type 1
+```
+
+### 4.Non-neutral divergence among individuals at SNPs (pcangsd)
+
+We used PCAngsd to scan for any SNP outlier in inshore and offshore.
+
+```bash
+angsd -bam all_187_bam.list -ref ${ref} -anc ${ref} -C 50 \
+        -GL 2 -doGlf 2 -sites ${bed} -doMaf 1 -doCounts 1 -minQ 30 -minMapQ 30 -skipTriallelic 1 \
+        -nThreads 40 -uniqueOnly 1 -doMajorMinor 1  -minInd 100 -minmaf 0.05 -SNP_pval 1e-6 \
+        -out north_187_SNPs
+        
+pcangsd.py -beagle north_187_SNPs.beagle.gz -selection -minMaf 0.05 -threads 2 -o xxx -sites_save
+```
+
+### 5. Results
+
+
+```{r eval=FALSE}
+## to re format pestPG files
+
+#clean_pestPG <- function(filename) {
+#  df <- read_tsv(filename) %>% dplyr::select(-1) %>% 
+#  mutate(pos=WinCenter-25000) %>% rename(chr=Chr) %>% 
+#  dplyr::select(chr,pos,tW,tP,Tajima,nSites) %>% mutate(tW=tW/nSites,tP=tP/nSites)# %>% dplyr::select(-nSites)
+#  outname <- paste0(str_remove(filename,"pestPG"),"txt")
+#  write_tsv(df,outname,col_names = FALSE)
+#}
+#clean_pestPG("data/hpc/inshore_offshore/inshore.w50s10.theta.pestPG")
+#clean_pestPG("data/hpc/inshore_offshore/offshore.w50s10.theta.pestPG")
+#clean_pestPG("data/hpc/inshore_offshore/north.w50s10.theta.pestPG")
+```
+
+```{r read_all_tracks}
+fst <- read_table("data/hpc/inshore_offshore/inshore_offshore.w50s10.fst.ragtag.txt",col_names = c("chr","pos","Nsites","fst")) %>% mutate(fst=ifelse(fst<0,0,fst))
+theta<- read_table("data/hpc/inshore_offshore/north.w50s10.theta.pestPG.ragtag.txt",col_names = c("chr","pos","all_tw","all_tp","all_tajima","nsites")) %>% mutate(all_tw=all_tw/nsites,all_tp=all_tp/nsites) %>% select(-nsites)
+theta_inshore<- read_table("data/hpc/inshore_offshore/inshore.w50s10.theta.pestPG.ragtag.txt",col_names = c("chr","pos","in_tw","in_tp","in_tajima","nsites")) %>% mutate(in_tw=in_tw/nsites,in_tp=in_tp/nsites) %>% select(-nsites)
+theta_offshore<- read_table("data/hpc/inshore_offshore/offshore.w50s10.theta.pestPG.ragtag.txt",col_names = c("chr","pos","off_tw","off_tp","off_tajima","nsites")) %>% mutate(off_tw=off_tw/nsites,off_tp=off_tp/nsites) %>% select(-nsites)
+dxy <-read_table("data/hpc/inshore_offshore/inshore_offshore.w50s10.Getdxy.ragtag.txt",col_names = c("chr","pos","dxy")) %>% na.omit()
+```
+
+```{r, fig.width=10.6, fig.height=5.8}
+meta_df <- fst %>% left_join(theta) %>% left_join(theta_inshore) %>% left_join(theta_offshore) %>% left_join(dxy) %>% left_join(offsets) %>% mutate(abs_pos=pos+offset) %>% mutate(covered=Nsites/50000)
+
+meta_df %>%filter(covered>0.1) %>% pivot_longer(-c(chr,pos,abs_pos,length,offset,scaffold_num,Nsites,covered)) %>% 
+  filter(name%in%c("fst","all_tp","all_tajima","in_tp","off_tp","dxy")) %>% 
+  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplanced")) %>% 
+  ggplot(aes(x=abs_pos/1e+6,y=value,color=chr_type)) + geom_point(size=1,alpha=.6) +
+  geom_point(data=meta_df %>% filter(covered>0.1) %>%  mutate(q=quantile(fst,0.9999)) %>% filter(fst>q) %>% pivot_longer(-c(chr,pos,abs_pos,length,offset,scaffold_num)) %>% filter(name%in%c("fst","all_tp","all_tajima","in_tp","off_tp","dxy")),aes(x=abs_pos/1e+6,y=value),color="red",size=1) +
+  labs(x="",y="") + scale_color_manual(values = c("#6caeff","#2b5d9b","grey"),guide="none") + 
+  theme_classic(base_size = 12) + theme(axis.ticks.x = element_blank(), axis.text.x = element_blank()) + facet_wrap(~name,ncol = 1,scales = "free_y")
+
+
+#plot small window
+meta_df %>%filter(covered>0.1) %>% pivot_longer(-c(chr,pos,abs_pos,length,offset,scaffold_num,Nsites,covered)) %>% 
+  #filter(name%in%c("fst","all_tp","all_tajima","in_tp","off_tp","dxy"),abs_pos>100000,abs_pos<2400000) %>% 
+  filter(name%in%c("fst","all_tp","all_tajima","in_tp","off_tp","dxy"),chr=="chr1_RagTag") %>% 
+  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplanced")) %>% 
+  ggplot(aes(x=abs_pos/1e+6,y=value,color=chr_type)) + geom_point(size=1,alpha=.6) +
+  geom_point(data=meta_df %>% filter(covered>0.1) %>%  mutate(q=quantile(fst,0.9999)) %>% filter(fst>q) %>% pivot_longer(-c(chr,pos,abs_pos,length,offset,scaffold_num)) %>% filter(name%in%c("fst","all_tp","all_tajima","in_tp","off_tp","dxy")),aes(x=abs_pos/1e+6,y=value),color="red",size=1) +
+  labs(x="",y="") + scale_color_manual(values = c("#6caeff","#2b5d9b","grey"),guide="none") + 
+  theme_classic(base_size = 12) + theme(axis.ticks.x = element_blank(), axis.text.x = element_blank()) + facet_wrap(~name,ncol = 1,scales = "free_y")
+```
+
+### 6. PCA based on SNPs in high Fst region
+
+```{r}
+covmat_locus <- read_table("data/hpc/inshore_offshore/locus/locus_Sc0000104_200000-240000.pcangsd.cov",col_names = F) %>% as.matrix()
+sample_ids <- read_tsv("data/hpc/inshore_offshore/north187_sample_id.txt", col_names = "sample_id",show_col_types = FALSE) %>% pull(sample_id)
+colnames(covmat_locus)<- sample_ids
+rownames(covmat_locus) <- sample_ids
+locus_eigen <- eigen(covmat_locus)
+sample_table <- read_csv("data/hpc/qc/summary_data.csv",show_col_types = FALSE) %>% select(sample_id,pop,location,reef) %>% mutate(reef=ifelse(reef=="Outer","Offshore","Inshore"))
+locus_pc1_loading <- data.frame(pc1=locus_eigen$vectors[,1],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+locus_pc2_loading <- data.frame(pc1=locus_eigen$vectors[,2],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+locus_pca12 <- data.frame(x=locus_eigen$vectors[,1],y=locus_eigen$vectors[,2],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+locus_pca23 <- data.frame(x=locus_eigen$vectors[,2],y=locus_eigen$vectors[,3],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+locus_pc1 <- round(((locus_eigen$values)/sum(locus_eigen$values))*100,2)[1]
+locus_pc2 <- round(((locus_eigen$values)/sum(locus_eigen$values))*100,2)[2]
+locus_pc3 <- round(((locus_eigen$values)/sum(locus_eigen$values))*100,2)[3]
+
+ggplot(locus_pca12, aes(x=x,y=y)) + geom_point(aes(color=reef),size=2)+ scale_color_manual(values = cbp1) +
+  #scale_color_manual(values = site_colors(), labels=site_labels()) + 
+  theme_test(base_size = 12) + labs(x=paste0("PC1 (",locus_pc1,"%)"),y=paste0("PC2 (",locus_pc2,"%)"), shape="", color="")
+
+
+#pc1 loading in populations
+ggplot(locus_pc1_loading, aes(x=reorder(pop,pop_order),y=pc1,color=reorder(pop,pop_order))) + #geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
+  geom_jitter(size=2,width = 0.15)+
+  #geom_point()+
+  scale_color_manual(values = site_colors(),guide="none") + 
+  theme_pubr(base_size = 12) + labs(y=paste0("PC1 (",locus_pc1,"%)"),x="", color="")
+
+#pc1 loading in reefs
+ggplot(locus_pc1_loading, aes(x=reef,y=pc1,color=reef)) + #geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
+  geom_jitter(size=2,alpha=.6,width = 0.1)+scale_color_manual(values = cbp1) +
+  #geom_point()+
+  #scale_color_manual(values = site_colors(), labels=site_labels()) + 
+  theme_pubr(base_size = 12) + labs(y=paste0("PC1 (",locus_pc1,"%)"),x="", color="")
+```
+I then checked the Maf distribution in this region
+
+```{r, fig.height=3, fig.width=3}
+maf_inshore <- read_table("data/hpc/inshore_offshore/locus/inshore.Sc0000104_200000-240000.SNPs.maf",skip = 1,col_names = c("chr","pos","major","minor","ref","anc","maf","nind")) %>% add_column(pop="inshore")
+maf_offshore <- read_table("data/hpc/inshore_offshore/locus/offshore.Sc0000104_200000-240000.SNPs.maf",skip = 1,col_names = c("chr","pos","major","minor","ref","anc","maf","nind")) %>% add_column(pop="offshore")
+df_maf <- rbind(maf_inshore,maf_offshore)
+
+df_maf %>% ggplot(aes(x=maf,fill=pop)) + 
+  geom_histogram(color="black",position="identity",alpha=.6,binwidth = 0.01) + 
+  theme_pubr() + scale_fill_manual(values = cbp1, label=c("North Inshore","Offshore")) + labs(x="Minor allele frequency",y="Number of loci", fill="")
+```
+
+
+
+
+### 7. Selection based on PCANGSD
+
+```{r cache=TRUE}
+#library(RcppCNPy)
+#C <- as.matrix(read.table("data/hpc/inshore_offshore/north_187.pcangsd.cov")) # Reads in estimated covariance matrix
+#D <- npyLoad("data/hpc/inshore_offshore/north_187.pcangsd.selection.npy") # Reads PC based selection statistics
+
+#read_table("data/hpc/inshore_offshore/north_187.pcangsd.pos",col_names = c("chr","pos")) %>% add_column(stats=D,pval=pchisq(stats, 1, lower.tail=FALSE)) %>% write.table("data/hpc/inshore_offshore/north_187.pcangsd.selection.txt",quote = F,row.names = F,sep = "\t",col.names = F)
+
+pcangsd_df<- read_table("data/hpc/inshore_offshore/north_187.pcangsd.selection.ragtag.txt",col_names = c("chr","pos","score","pval"))
+
+fdr005<- pcangsd_df %>% mutate(logp=-log10(pval),fdr=p.adjust(pval)) %>% filter(fdr<=0.05) %>% arrange(desc(fdr)) %>% top_n(1) %>% pull(pval) 
+
+pcangsd_df %>% left_join(offsets) %>% mutate(abs_pos=pos+offset) %>% #filter(chr=="chr1_RagTag") %>% 
+  #filter(abs_pos>0,abs_pos<3000000) %>% 
+  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplanced")) %>% 
+  ggplot(aes(x=abs_pos/1e+6,y=-log10(pval),color=chr_type)) + geom_point(size=1,alpha=.6) +
+  geom_hline(yintercept = -log10(fdr005),color="red") +
+  labs(y="-log10(P)",x="Chromosome") + scale_color_manual(values = c("#6caeff","#2b5d9b","grey"),guide="none") + 
+  theme_classic(base_size = 12) + theme(axis.ticks.x = element_blank(), axis.text.x = element_blank()) 
+```
+
+**Figure: Manhattan plot of the selection statistics from PCAngsd applied to north GBR samples. Red horizontal line is the Bonferroni adjusted significance level (FDR<0.05).**
+
+Interestingly, pcangsd revealed several regions with SNPs significantly deviated from the PCA clustering. We then extracted these regions to only implement PCA analysis with them.
+
+```{r}
+#read_table("data/hpc/inshore_offshore/north_187.pcangsd.selection.txt",col_names = c("chr","pos","score","pval")) %>% filter(pval<fdr005) %>% select(chr,pos) %>% write.table("north_187.pcangsd_selection.sig005.pos",quote = F,sep = "\t",row.names = F,col.names = F)
+
+covmat <- read_table("data/hpc/inshore_offshore/pcangsd_sig005/north_187_sig005.pcangsd.cov",col_names = F) %>% as.matrix()
+#covmat <- read_table("data/hpc/inshore_offshore/pcangsd_sig005/Sc0000013_chr1_RagTag.pcangsd.cov",col_names = F) %>% as.matrix()
+sample_ids <- read_tsv("data/hpc/inshore_offshore/north187_sample_id.txt", col_names = "sample_id",show_col_types = FALSE) %>% pull(sample_id)
+colnames(covmat)<- sample_ids
+rownames(covmat) <- sample_ids
+pop_eigen <- eigen(covmat)
+sample_table <- read_csv("data/hpc/qc/summary_data.csv",show_col_types = FALSE) %>% select(sample_id,pop,location,reef) %>% mutate(reef=ifelse(reef=="Outer","Offshore","Inshore"))
+pc1_loading <- data.frame(pc1=pop_eigen$vectors[,1],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+pc2_loading <- data.frame(pc1=pop_eigen$vectors[,2],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+pop_pca12 <- data.frame(x=pop_eigen$vectors[,1],y=pop_eigen$vectors[,2],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+pop_pca23 <- data.frame(x=pop_eigen$vectors[,2],y=pop_eigen$vectors[,3],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+pc1 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[1]
+pc2 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[2]
+pc3 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[3]
+
+ggplot(pop_pca12, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
+  scale_color_manual(values = site_colors(), labels=site_labels()) + 
+  theme_test(base_size = 12) + labs(x=paste0("PC1 (",pc1,"%)"),y=paste0("PC2 (",pc2,"%)"), shape="Location", color="Reef")
+
+
+#pc1 loading in populations
+ggplot(pc1_loading, aes(x=reorder(pop,pop_order),y=pc1,color=reorder(pop,pop_order))) + #geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
+  geom_jitter(size=2,alpha=.8,width = 0.15)+
+  #geom_point()+
+  scale_color_manual(values = site_colors(),guide="none") + 
+  theme_pubr(base_size = 12) + labs(y=paste0("PC1 (",pc1,"%)"),x="", shape="", color="")
+
+#pc1 loading in reefs
+ggplot(pc1_loading, aes(x=reef,y=pc1,color=reef)) + #geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
+  geom_jitter(size=2,alpha=.8,width = 0.1)+scale_color_manual(values = cbp1) +
+  #geom_point()+
+  #scale_color_manual(values = site_colors(), labels=site_labels()) + 
+  theme_pubr(base_size = 12) + labs(y=paste0("PC1 (",pc1,"%)"),x="", shape="", color="")
+
+```
+
+**PS: check dxy vs Fst**
+
+Here, we tested whether there are regions could be identified as classical genomic islands of speciation. There genomic islands are characterised as high relative divergece (Fst) and high absolute divergence (dxy). We compared the dxy values in windows with top 1% of high Fst values and rest of the genome, windows with data as least of constitute 10% of the region were included.
+
+```{r}
+dxy2 <- read_tsv("data/hpc/inshore_offshore/inshore_offshore.w50s10.dxy.ragtag.txt",col_names = c("chr","pos","dxy2")) 
+
+left_join(fst,dxy) %>% left_join(dxy2) %>% mutate(covered=Nsites/50000) %>% filter(covered>0.1) %>% 
+  mutate(thres=quantile(fst,prob=0.99), type=ifelse(fst>thres,"High Fst","Low Fst")) %>% 
+  pivot_longer(-c(chr,pos,thres,type,Nsites,covered),names_to = "stat") %>% 
+  ggplot(aes(x=type,y=value)) + geom_boxplot(notch = T) +facet_wrap(~stat,scales = "free") +
+  theme_bw() + labs(x="",y="Statistics",color="")
+
+```
+
+
+
+dxy: getDxy.pl 算出来150M sites into windows。 50M sites 因为不是biallelic被忽略了.
+dxy2: 我的python code算出来200M sites into windows, including non-biallelic sites
+
+conclusion: it got slightly lower means with all site dxy values (with non-biallelic sites) than only-biallelic sites(getDxy.pl). However, it won't affect the distribution. 我感觉包括了non-biallelic后，那些低dxy的sites更多了，说明那些多出来的sites都是一些divergence不大的位点。it make sense，在angsd结果中被认为是triallelic一般都是non-common variant（指出现频率很低）或者sequencing error。这种算出来的值就很低。
+

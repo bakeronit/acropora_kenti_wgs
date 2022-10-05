@@ -1,0 +1,149 @@
+---
+title: "Genetic Statistics"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.retina = 2)
+library(tidyverse)
+library(ggpubr)
+library(ggbreak)
+library(knitr)
+source("scripts/my_color.R")
+
+df <- read_csv("data/hpc/qc/summary_data.csv") %>% mutate(pop_order=site_order()[pop],
+                                                          mapping_rate=as.numeric(sub("%", "", mapping_rate)),
+                                                          genome_cov=as.numeric(sub("%", "", genome_cov)))
+```
+
+
+To get the estimates of window-based genetic diversity and neutrality test of our samples, we first used realSFS program to calculate the site frequency spectrum (SFS) of each reef and 2D SFS of each pair of reefs using the saf files. The thetaStat within ANGSD was then used to compute (sliding-window:10k with jump size of 2k) the nucleotide diversity and tajima's D, etc. and realSFS was used to get the Fst values between each pair.
+
+```bash
+angsd -bam {pop.bamlist} -ref {ref} -C 50 \
+  -GL 2 -doSaf 1 -sites {input.bed} \
+  -doCounts 1 -minQ 30 -minMapQ 30 -nThreads {threads} -uniqueOnly 1 -doMajorMinor 1 -out {pop}
+  
+#thetastat
+realSFS {pop}.saf.idx -fold 1 -P {threads} > {pop}.folded.sfs
+realSFS saf2theta {pop}.saf.idx -outname {pop} -sfs {pop}.folded.sfs -fold 1
+thetaStat do_stat {pop}.theta.idx -win 10000 -step 2000 -outnames {pop}.thetas_w10ks2k
+
+#Fst
+realSFS -P {threads} {pop1}.saf.idx {pop2}.saf.idx -fold 1 > {pop1}-{pop2}.2dsfs
+realSFS fst index {pop1}.saf.idx {pop2}.saf.idx -sfs {pop1}-{pop2}.2dsfs -fstout {pop1}-{pop2}
+realSFS fst stats {pop1}-{pop2}.fst.idx 
+```
+
+
+```{r}
+read_pestPG <- function(filename) {
+  pop <- filename %>% basename %>% str_remove(".thetas_w10ks2k.pestPG")
+  read_tsv(filename) %>% select(Chr,WinCenter,tW,tP,Tajima,nSites) %>% add_column(pop=pop) %>% mutate(tW=tW/nSites,tP=tP/nSites,covered=nSites/10000)
+}
+
+stat_df <- map_df(list.files("data/hpc/summary/thetaStat/",pattern = "*.pestPG",full.names = T),read_pestPG) %>% mutate(pop_order=site_order()[pop])
+
+#stat_df %>% ggplot(aes(y=tW,x=covered)) + geom_point(size=.2)+facet_wrap(~pop,scale="free") + geom_vline(xintercept = 0.05)+theme_bw()
+
+
+ggplot(stat_df %>% filter(covered>0.1),aes(x=reorder(pop,pop_order),y=Tajima,color=reorder(pop,pop_order))) + geom_boxplot() + scale_color_manual(values = site_colors()) +
+labs(x="",y="Tajima's D",color="") + theme_pubclean() + coord_flip()
+
+ggplot(stat_df%>% filter(covered>0.1,pop!="north"),aes(x=reorder(pop,pop_order),y=tW,color=reorder(pop,pop_order))) + geom_boxplot(notch = TRUE) + scale_color_manual(values = site_colors()) +
+labs(x="",y="Theta Watterson",color="") + theme_pubclean() + coord_flip() + ylim(0,0.05)
+
+ggplot(stat_df%>% filter(covered>0.1),aes(x=reorder(pop,pop_order),y=tP,color=reorder(pop,pop_order))) + geom_boxplot(notch = TRUE) + scale_color_manual(values = site_colors()) +
+labs(x="",y="Theta Pi",color="") + theme_pubclean() + coord_flip() + ylim(0,0.01)
+
+
+stat_df %>% filter(covered>0.1) %>% group_by(pop) %>% summarise(mean_tw=mean(tW,na.rm=T), mean_tp=mean(tP,na.rm=T),mean_td=mean(Tajima,na.rm=T)) 
+```
+
+## Pairwise differentiation Fst
+
+```{r}
+fst_table1 <- read_tsv("data/hpc/summary/pop_fst_table.txt",col_names = c("a","b","fst")) 
+fst_table2 <- read_tsv("data/hpc/summary/pop_fst_table.txt",col_names = c("b","a","fst")) 
+fst_table<- rbind(fst_table1,fst_table2) 
+
+mid<-max(fst_table$fst)/2
+fst_label = expression(italic("F")[site_order()])
+
+
+ggplot(data = fst_table2 %>% filter(a!="north"&b!="north"), aes(x = reorder(a,site_order()[a]), y = reorder(b,site_order()[b]), fill = fst))+
+  geom_tile(colour = "black")+
+  geom_text(aes(label = fst), color="black", size = 3)+
+  scale_fill_gradient2(low = "white", mid = "grey3", high = "darkgrey",midpoint = mid, name=expression(italic("F")[ST]),
+                       limits = c(0, max(fst_table1$fst)), breaks = c(0.02, 0.05, 0.10,0.20))+
+  scale_x_discrete(expand = c(0,0), position = "top")+
+  scale_y_discrete(expand = c(0,0), position = "left")+
+  theme(axis.text = element_text(colour = "black", size = 12, face = "bold"),
+        axis.title = element_blank(),
+        panel.grid = element_blank(),
+        panel.background = element_blank(),
+        legend.position = "right",
+        legend.title = element_text(size = 12, face = "bold"),
+        legend.text = element_text(size = 12),
+        rect = element_rect(fill = "transparent")
+        )
+
+```
+
+Fst tree attempt
+```{r, fig.width=4}
+fst.matrix <- fst_table %>% filter(a!="north" &b!="north") %>% pivot_wider(names_from = a,values_from = fst,values_fill=0)%>% arrange(b) %>% column_to_rownames("b") %>% as.matrix()
+
+require(stats)
+require(ggtree)
+tree <- ape::as.phylo(stats::hclust(stats::dist(fst.matrix), method = "average"))
+bootstrap.value <- ape::boot.phylo(phy = tree, x = fst.matrix, FUN = function(xx) ape::as.phylo(stats::hclust(stats::dist(xx), method = "average")) , block = 1, B = 10000, trees = FALSE, rooted = TRUE) 
+bootstrap.value <- round((bootstrap.value/10000)*100, 0)
+bootstrap.value
+tree$node.label <- bootstrap.value
+
+
+tree.figure <- ggtree(tree,ladderize = T)  + 
+    geom_tiplab(size = 3.5, hjust = -0.05, vjust = 0.5,fontface="bold")+ # for just the tip label
+    #geom_text(ggplot2::aes(label = label), size = 3, hjust = -0.05, vjust = 0.5) + # show bootstrap value
+    theme_tree() + 
+    theme( panel.background = element_rect(fill = "transparent",
+                                  colour = NA_character_), # necessary to avoid drawing panel outline
+  panel.grid.major = element_blank(), # get rid of major grid
+  panel.grid.minor = element_blank(), # get rid of minor grid
+  plot.background = element_rect(fill = "transparent",
+                                 colour = NA_character_), # necessary to avoid drawing plot outline
+  legend.background = element_rect(fill = "transparent"),
+  legend.box.background = element_rect(fill = "transparent"),
+  legend.key = element_rect(fill = "transparent")) +
+    xlim(0, NA) 
+tree.figure
+
+
+#ggsave("test.png",width = 6.2,height = 3,dpi = 300)
+```
+
+We also used realSFS to estimate the allele frequency spectrum of every individual and the estiamted heterozygosity was calculated by dividing the total number of sites with the variant sites.
+
+```bash
+angsd -i $i -ref ${ref} -anc ${ref} -C 50 \
+-GL 2 -doSaf 1 -sites ../reference_mappability_K50_E2.unique_mdust_depth.bed \
+-doCounts 1 -minQ 30 -minMapQ 30 -nThreads 15 -uniqueOnly 1 -doMajorMinor 1 -setMinDepth 2 -setMaxDepth 12 -out $sample
+
+realSFS -fold 1 -P 15 ${sample}.saf.idx > ${sample}.ml
+```
+
+
+```{r}
+read_ml <- function(filename){
+  sample_id <- basename(filename) %>% str_remove(".ml")
+  temp <- scan(filename)
+  tibble(sample_id=sample_id, het=temp[2]/sum(temp))
+}
+
+heter <- map_df(list.files("data/hpc/summary/heter/",pattern = ".*ml", full.names = T),read_ml) %>% left_join(df)
+ggplot(heter, aes(x=reorder(pop,pop_order),y=het,color=reorder(pop,pop_order))) + geom_violin() +
+  geom_jitter() + scale_color_manual(values = site_colors(), labels=site_labels()) +
+  theme_bw() + labs(x="",y="Individual heterozygosity",color="")
+
+```
