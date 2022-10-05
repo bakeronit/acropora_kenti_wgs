@@ -1,4 +1,4 @@
-## Population genetics of *Acropora tenius* on GBR
+## Population genomics of *Acropora tenius* on the Great Barrier Reef
 
 Analysis and code including in this project
 
@@ -11,14 +11,19 @@ Analysis and code including in this project
 
 - [PCA and admixture analysis](04.population_structure.md)
 - [IBS tree](05.IBS-tree.md)
-- [Population statistics]
+- [Population statistics](06.genetic_statistics.md)
+
+### Genome-wide differentiation and diversity among populations
+
+- [Between north inshore and offshore](08.selective_sweep_inshore_offshore.md)
+- [Between north inshore and Magnetic Island]
+
+
+### TODO:
 - [EEMS]
-
-### Selection analysis
-
-- [selection based on pcangsd]
-
-###
-
 - [2dSFS]
 
+### Others
+
+- [Window size](0x.window_size.md)
+- [Batch effects](0x.Batch_effects.md)
