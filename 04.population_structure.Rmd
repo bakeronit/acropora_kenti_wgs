@@ -22,7 +22,7 @@ We firstly used pcangsd to calculate covariance of all SNPs and plotted the firs
 pcangsd --beagle atenuis.beagle.gz --threads 48 --admix --admix_auto 10000 --out atenuis.pcangsd
 ```
 
-```{r}
+```{r, fig.width=9.2, fig.height=3.8}
 covmat <- read_table("data/hpc/pca/atenius.ind212.unique_mdust1M.pcangsd.cov",col_names = F) %>% as.matrix()
 
 sample_ids <- read_tsv("data/hpc/pca/ind212.txt", col_names = "sample_id",show_col_types = FALSE) %>% pull(sample_id)
@@ -39,18 +39,24 @@ pc1 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[1]
 pc2 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[2]
 pc3 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[3]
 
-ggplot(pop_pca12, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
+p1<-ggplot(pop_pca12, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
   geom_text_repel(data=pop_pca12 %>% filter(sample_id %in% c("MI-1-1_S10","PI-1-16_S16","DI-2-4_S17","ARL_15_S69")),aes(x=x,y=y,label=sample_id),size=2,hjust=2,vjust=1) + 
   geom_point(data=pop_pca12 %>% filter(sample_id %in% c("MI-1-1_S10","PI-1-16_S16","DI-2-4_S17","ARL_15_S69")),aes(x=x,y=y),size=.8,color="black") +
-  scale_color_manual(values = site_colors(), labels=site_labels()) + 
-  theme_test(base_size = 12) + labs(x=paste0("PC1 (",pc1,"%)"),y=paste0("PC2 (",pc2,"%)"), shape="Location", color="Reef")
+  scale_color_manual(values = site_colors(), labels=site_labels(),guide="none") + 
+  theme_test(base_size = 12) + labs(x=paste0("PC1 (",pc1,"%)"),y=paste0("PC2 (",pc2,"%)")) + theme(legend.position = "none")
 
-ggplot(pop_pca23, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+
+p2<-ggplot(pop_pca23, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+
   scale_color_manual(values = site_colors(), labels=site_labels()) + 
   theme_test(base_size = 12) + labs(x=paste0("PC2 (",pc2,"%)"),y=paste0("PC3 (",pc3,"%)"), shape="Location", color="Reef")
 
+cowplot::plot_grid(p1,p2,rel_widths = c(0.42,0.58), labels = c("a)","b)"),label_size = 12)
+
+#ggsave("s-fig-pca.png",width = 9.2,height = 3.8)
+
 hybrids <-c("MI-1-1_S10","PI-1-16_S16","DI-2-4_S17","ARL_15_S69")
 ```
+
+**The admixture plot based on PCAngsd**
 
 ```{r}
 q2_admixture <- read_table("data/hpc/pca/atenius.ind212.unique_mdust1M.pcangsd.admix.2.Q", col_names = c("X2","X1")) %>%
@@ -79,7 +85,9 @@ p1
 
 ### LD-Pruned results
 
-```{r}
+We did the same PCA analysis with PCAngsd with LD-pruned SNPs.
+
+```{r fig.width=9.2, fig.height=3.8}
 covmat_unlinked <- read_table("data/hpc/pca/atenius.ld_pruned_snps.pcangsd.cov",col_names = F) %>% as.matrix()
 
 colnames(covmat_unlinked)<- sample_ids
@@ -93,16 +101,18 @@ pc1 <- round(((pop_eigen_unlinked$values)/sum(pop_eigen$values))*100,2)[1]
 pc2 <- round(((pop_eigen_unlinked$values)/sum(pop_eigen$values))*100,2)[2]
 pc3 <- round(((pop_eigen_unlinked$values)/sum(pop_eigen$values))*100,2)[3]
 
-ggplot(pop_pca12_unlinked, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+
+p1<-ggplot(pop_pca12_unlinked, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+
   scale_color_manual(values = site_colors(), labels=site_labels()) + 
-  theme_test() + labs(x=paste0("PC1 (",pc1,"%)"),y=paste0("PC2 (",pc2,"%)"), shape="Location", color="Reef")
+  theme_test() + labs(x=paste0("PC1 (",pc1,"%)"),y=paste0("PC2 (",pc2,"%)"))+ theme(legend.position = "none")
 
-ggplot(pop_pca23_unlinked, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+
+p2<-ggplot(pop_pca23_unlinked, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+
   scale_color_manual(values = site_colors(), labels=site_labels()) + 
   theme_test() + labs(x=paste0("PC2 (",pc2,"%)"),y=paste0("PC3 (",pc3,"%)"), shape="Location", color="Reef")
+
+cowplot::plot_grid(p1,p2,rel_widths = c(0.42,0.58), labels = c("a)","b)"),label_size = 12)
 ```
 
-A minor discontinuity was in north reefs samples were observed but the results were similar.
+In this PCA plot, A minor discontinuity was in north reefs samples were observed but the results were qualitatively the same.
 
 
 ```{r}
@@ -141,16 +151,16 @@ NGSadmix -likes atenius.ld_pruned_snps.beagle.gz -K 3 -outfiles atenius.ld_prune
 ```
 The results from all snps were presented here.
 
-```{r, fig.width=12,fig.height=3}
+```{r, fig.width=9.8,fig.height=4}
 qopt2 <- read_table("data/hpc/ngsAdmix/atenius.ind212.unique_mdust1M.K2.qopt",col_names = c("X1","X2")) %>% 
   add_column(sample_id = sample_ids) %>% gather(cluster, proportion, -sample_id) %>% left_join(sample_table) %>% mutate(pop_order = site_order()[pop])
 qopt3 <- read_table("data/hpc/ngsAdmix/atenius.ind212.unique_mdust1M.K3.qopt",col_names = c("X1","X2","X3")) %>%
   add_column(sample_id = sample_ids) %>% gather(cluster, proportion, -sample_id) %>% left_join(sample_table) %>% mutate(pop_order = site_order()[pop])
 
 
-ggplot(qopt2,aes(x=sample_id,y=proportion,fill=cluster)) + scale_fill_manual(values = c("white","black"),guide="none")+
+p1<- ggplot(qopt2,aes(x=sample_id,y=proportion,fill=cluster)) + scale_fill_manual(values = c("white","black"),guide="none")+
   geom_col(color="darkgrey",size=0.1) +
-  facet_grid(~reorder(location,pop_order), switch = "x",scales = "free",space = "free") + 
+  facet_grid(~reorder(location,pop_order), switch = "x",scales = "free",space = "free",labeller = label_wrap_gen(width = 12, multi_line = TRUE)) + 
   theme_minimal() + scale_y_continuous(expand = c(0,0)) +
   scale_x_discrete(expand = expand_scale(add=1))+
   labs(x = "", title = "K=2", y = "Ancestry")+
@@ -158,22 +168,25 @@ ggplot(qopt2,aes(x=sample_id,y=proportion,fill=cluster)) + scale_fill_manual(val
   theme(panel.spacing.x = unit(0.1,"lines"),
         axis.text.x = element_blank(),
         panel.grid = element_blank(),
-        #strip.text.x = element_blank(),
-        axis.text.y = element_text(angle=270,hjust = 0.5),
-        axis.title.y = element_text(angle = 270))
+        strip.text.x = element_blank())
+        #axis.text.y = element_text(angle=270,hjust = 0.5),
+        #xis.title.y = element_text(angle = 270))
 
 #ggsave("ngsAdmix.png",width = 6.3,height = 1.6)
 
-ggplot(qopt3,aes(x=reorder(sample_id,pop_order),y=proportion,fill=cluster)) + #scale_fill_manual(values = c("black","lightgrey"))+
+p2<-ggplot(qopt3,aes(x=reorder(sample_id,pop_order),y=proportion,fill=cluster)) + #scale_fill_manual(values = c("black","lightgrey"))+
   geom_col(color="white",size=0.1) +
-  facet_grid(~reorder(location,pop_order), switch = "x",scales = "free",space = "free") + 
+  facet_grid(~reorder(location,pop_order), switch = "x",scales = "free",space = "free",labeller = label_wrap_gen(width = 12, multi_line = TRUE)) + 
   theme_minimal() + scale_y_continuous(expand = c(0,0)) +
   scale_x_discrete(expand = expand_scale(add=1))+
+  scale_fill_brewer(palette = "Set2") +
   labs(x = "Individuals", title = "K=3", y = "Ancestry")+
   theme(panel.spacing.x = unit(0.1,"lines"),
         axis.text.x = element_blank(),
         panel.grid = element_blank(),
         legend.position = "none")
 
+cowplot::plot_grid(p1,p2,nrow=2,rel_heights = c(0.46,0.54))
+#ggsave("s-fig-admix.png",width = 9.6,height = 4)
 
 ```
