@@ -142,8 +142,9 @@ read_ml <- function(filename){
 }
 
 heter <- map_df(list.files("data/hpc/summary/heter/",pattern = ".*ml", full.names = T),read_ml) %>% left_join(df)
-ggplot(heter, aes(x=reorder(pop,pop_order),y=het,color=reorder(pop,pop_order))) + geom_violin() +
-  geom_jitter() + scale_color_manual(values = site_colors(), labels=site_labels()) +
-  theme_bw() + labs(x="",y="Individual heterozygosity",color="")
+ggplot(heter, aes(x=reorder(pop,pop_order),y=het)) + geom_violin() +
+  geom_jitter(size=0.8,width = 0.2) + #scale_color_manual(values = site_colors(), labels=site_labels()) +
+  theme_bw(base_size = 12) + labs(x="",y="Individual heterozygosity")
 
+#ggsave("s-fig-indv_heter.png",height = 3.2,width = 4.5)
 ```
