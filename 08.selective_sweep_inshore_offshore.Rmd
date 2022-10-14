@@ -1,5 +1,5 @@
 ---
-title: "Signature of selection in inshore and offshore reefs"
+title: "Genomic landscape of genetic diversity between inshore and offshore corals"
 output: github_document
 ---
 ```{r setup, include=FALSE}
@@ -7,25 +7,34 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.retina
 library(tidyverse)
 library(ggpubr)
 library(knitr)
+library(ggrepel)
+library(gggenes)
+library(patchwork)
 source("scripts/my_color.R")
 
-offsets <- read_tsv("data/hpc/ragtag/ragtag.scaffold_lengths.txt", col_names = c("chr","length"),show_col_types = FALSE) %>% 
-  arrange(desc(length)) %>%
-  mutate(offset=lag(cumsum(length),default=0)) %>% 
+offsets <- read_tsv("data/hpc/ragtag/ragtag.scaffold_lengths.txt", col_names = c("chr","length"),show_col_types = FALSE)
+chr_order<-offsets$chr %>% str_order(numeric = T)
+offsets <- offsets[chr_order,] %>% mutate(offset=lag(cumsum(length),default=0)) %>% 
   mutate(scaffold_num=row_number())
+
+#offsets <- read_tsv("data/hpc/ragtag/ragtag.scaffold_lengths.txt", col_names = c("chr","length"),show_col_types = FALSE) %>% 
+  #arrange(desc(length)) %>% 
+#  mutate(offset=lag(cumsum(length),default=0)) %>% 
+#  mutate(scaffold_num=row_number())
 
 cbp1 <- c("#E69F00", "#56B4E9", "#009E73",
           "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+axis_chr<- offsets %>% group_by(chr) %>% summarise(centre=offset+length/2) %>% mutate(chr_id=ifelse(grepl(chr,pattern="chr"),chr,"Unplaced")) %>% group_by(chr_id) %>% summarise(centre=(max(centre)+min(centre))/2) %>% mutate(chr_id=str_remove(chr_id,"_RagTag"),chr_id=str_remove(chr_id,"chr"))
 ```
 
+Despite the strong gene flow among reefs and no structure between inshore and offshore, we investigate the genome-wide pattern of genetic diversity between and within inshore and offshore reefs.
 
-Despite no migration barrier and a lack of population structure between inshore and offshore reefs suggest they share a mix gene pool. However, the inshore and offshore habitat pose different environmental pressure to larvae and we are expecting to observe balance selection that main the overall nucleotide diversity whereas show differentiation between two populations.
-
-We conducted a series of scans for selective sweeps by identify regions with significant high nucleotide diversity (pi) or high divergence (Fst) between inshore and offshore.
+## Methods
 
 ### 1. Site frequency spectrum estimate for inshore and offshore
 
-In this analysis, we only included samples from north GBR (118 from inshore, 69 from offshore) and we used realSFS within ANGSD to estimate the SFS for each group or pairwise 2DSFS of inshore and offshore. To make sure some loci were used in analysis, we firstly used ANGSD to estimate sfs for all 187 samples and set the similar filtering as before. We got the site index from the mafs file and then we limited the SFS estimate of inshore and offshore in these sites (202,829,504) without any further filtering.
+In this analysis, we only included samples from the north GBR (118 from inshore, 69 from offshore) and we used realSFS within ANGSD to estimate the SFS for each group or pairwise 2DSFS of inshore and offshore. To make sure some loci were used in analysis, we firstly used ANGSD to estimate sfs for all 187 samples and set the similar filtering as before. We got the site index from the mafs file and then we limited the SFS estimate of inshore and offshore in these sites (202,829,504) without any further filtering.
 
 ```bash
 angsd -bam all_187_bam.list -ref ${ref} -anc ${ref} -C 50 \
@@ -43,7 +52,7 @@ angsd -bam offshore69_bam.list -ref ${ref} -anc ${ref} -sites north_187_minInd10
 
 ```
 
-### 2. Fst sliding-window stats
+### 2. Sliding-window Fst estimate
 
 Next, we used realSFS to do sliding-window statistic of Fst with a window size of 50kb and a jump size of 10kb through three steps. 
 
@@ -56,93 +65,157 @@ Next, we used realSFS to do sliding-window statistic of Fst with a window size o
 ```bash
 realSFS -P 24 inshore.saf.idx offshore.saf.idx -fold 1 > inshore_offshore.folded.2dsfs
 realSFS fst index inshore.saf.idx offshore.saf.idx -sfs inshore_offshore.2dsfs -fold 1 -fstout inshore_offshore
-realSFS fst stats2 inshore_offshore.fst.idx -win 50000 -step 10000 -type 1 > inshore_offshore.w50s10.fst
+realSFS fst stats2 inshore_offshore.fst.idx -win 20000 -step 4000 -type 1 > inshore_offshore.w50s10.fst
 ```
 
-### 3. genetic diversity stats
+### 3. Theta statistics
 
 We used realSFS and thetaStat within ANGSD to generate SFS, to estimate theta per site and to calculate neutrality test statistics, like Tajima's D, etc. in sliding windows for inshore, offshore,and overall, separately.
 
 ```bash
 realSFS inshore.saf.idx -P 24 -fold 1 > inshore.folded.1dsfs
 realSFS saf2theta inshore.saf.idx -sfs inshore.folded.1dsfs -outname inshore -fold 1
-thetaStat do_stat inshore.thetas.idx -win 50000 -step 10000 -outnames inshore.w50s10.theta -type 1
+thetaStat do_stat inshore.thetas.idx -win 20000 -step 4000 -outnames inshore.w20s4.theta -type 1
 
 realSFS offshore.saf.idx -P 24 -fold 1 > offshore.folded.1dsfs
 realSFS saf2theta offshore.saf.idx -sfs offshore.folded.1dsfs -outname offshore -fold 1
-thetaStat do_stat offshore.thetas.idx -win 50000 -step 10000 -outnames offshore.w50s10.theta -type 1
+thetaStat do_stat offshore.thetas.idx -win 20000 -step 4000 -outnames offshore.w20s4.theta -type 1
 
 realSFS north_187_minInd100.saf.idx -P 24 -fold 1 > north.folded.1dsfs
 realSFS saf2theta north_187_minInd100.saf.idx -sfs north.folded.1dsfs -outname north -fold 1
-thetaStat do_stat north.thetas.idx -win 50000 -step 10000 -outnames north.w50s10.theta -type 1
+thetaStat do_stat north.thetas.idx -win 20000 -step 4000 -outnames north.w20s4.theta -type 1
 ```
 
-### 4.Non-neutral divergence among individuals at SNPs (pcangsd)
+### 4. Dxy calculation
 
-We used PCAngsd to scan for any SNP outlier in inshore and offshore.
+We used a Perl script [getDxy.pl](https://github.com/mfumagalli/ngsPopGen/blob/9ee3a6d5e733c1e248e81bfc21514b0527da967b/scripts/getDxy.pl) provided by the [ngsPopGen](https://github.com/mfumagalli/ngsPopGen/tree/9ee3a6d5e733c1e248e81bfc21514b0527da967b) toolset to calculate the DXY for every site in the mafs files generated by ANGSD, non-bi-alleles sites were removed in the calculation. Per-site DXY values were then grouped into sliding windows from FST estimates and the average value was assigned as the value for each window using Bedtools intersect and groupby. Note that only the global distribution of DXY was used in our results instead of actual values which were claimed to be overestimated.
 
 ```bash
-angsd -bam all_187_bam.list -ref ${ref} -anc ${ref} -C 50 \
-        -GL 2 -doGlf 2 -sites ${bed} -doMaf 1 -doCounts 1 -minQ 30 -minMapQ 30 -skipTriallelic 1 \
-        -nThreads 40 -uniqueOnly 1 -doMajorMinor 1  -minInd 100 -minmaf 0.05 -SNP_pval 1e-6 \
-        -out north_187_SNPs
-        
-pcangsd.py -beagle north_187_SNPs.beagle.gz -selection -minMaf 0.05 -threads 2 -o xxx -sites_save
+perl getDxy.pl --pop1maf inshore.mafs.gz --pop2maf offshore.mafs.gz --minInd 1 > inshore_offshore.getDxy.txt
+
+cut -f1,2,3 inshore_offshore.w20s4.fst |sed '1d'|\
+perl -F"\t" -nle '@F[0]=~m/(\(\d+,\d+\))(\(\d+,\d+\))\((\d+),(\d+)\).*/g; print join "\t",@F[1],$3,$4, @F[2];' >angsd_fst_window_w20s4.bed
+
+bedtools intersect -a angsd_fst_window_w20s4.bed -b <(awk '{print $1"\t"$2"\t"$2"\t"$3}' inshore_offshore.getDxy.txt) -loj |\
+bedtools groupby -g 1,2,3 -c 8 -o mean| awk '{print $1"\t"$2"\t"$4}' > inshore_offshore.w20s4.getDxy.txt
 ```
 
-### 5. Results
+Windowed results of all statistics were then converted into our psedu-chromosome coordinates using [translate_coords.py](scripts/translate_coords.py).
 
-
-```{r eval=FALSE}
-## to re format pestPG files
-
-#clean_pestPG <- function(filename) {
-#  df <- read_tsv(filename) %>% dplyr::select(-1) %>% 
-#  mutate(pos=WinCenter-25000) %>% rename(chr=Chr) %>% 
-#  dplyr::select(chr,pos,tW,tP,Tajima,nSites) %>% mutate(tW=tW/nSites,tP=tP/nSites)# %>% dplyr::select(-nSites)
-#  outname <- paste0(str_remove(filename,"pestPG"),"txt")
-#  write_tsv(df,outname,col_names = FALSE)
-#}
-#clean_pestPG("data/hpc/inshore_offshore/inshore.w50s10.theta.pestPG")
-#clean_pestPG("data/hpc/inshore_offshore/offshore.w50s10.theta.pestPG")
-#clean_pestPG("data/hpc/inshore_offshore/north.w50s10.theta.pestPG")
-```
+## Results
 
 ```{r read_all_tracks}
-fst <- read_table("data/hpc/inshore_offshore/inshore_offshore.w50s10.fst.ragtag.txt",col_names = c("chr","pos","Nsites","fst")) %>% mutate(fst=ifelse(fst<0,0,fst))
-theta<- read_table("data/hpc/inshore_offshore/north.w50s10.theta.pestPG.ragtag.txt",col_names = c("chr","pos","all_tw","all_tp","all_tajima","nsites")) %>% mutate(all_tw=all_tw/nsites,all_tp=all_tp/nsites) %>% select(-nsites)
-theta_inshore<- read_table("data/hpc/inshore_offshore/inshore.w50s10.theta.pestPG.ragtag.txt",col_names = c("chr","pos","in_tw","in_tp","in_tajima","nsites")) %>% mutate(in_tw=in_tw/nsites,in_tp=in_tp/nsites) %>% select(-nsites)
-theta_offshore<- read_table("data/hpc/inshore_offshore/offshore.w50s10.theta.pestPG.ragtag.txt",col_names = c("chr","pos","off_tw","off_tp","off_tajima","nsites")) %>% mutate(off_tw=off_tw/nsites,off_tp=off_tp/nsites) %>% select(-nsites)
-dxy <-read_table("data/hpc/inshore_offshore/inshore_offshore.w50s10.Getdxy.ragtag.txt",col_names = c("chr","pos","dxy")) %>% na.omit()
+fst <- read_table("data/hpc/inshore_offshore/w20s4/inshore_offshore.w20s4.fst.ragtag.txt",col_names = c("chr","pos","Nsites","fst")) %>% mutate(fst=ifelse(fst<0,0,fst))
+theta<- read_table("data/hpc/inshore_offshore/w20s4/north.w20s4.theta.pestPG.ragtag.txt",col_names = c("chr","pos","all_tw","all_tp","all_tajima","nsites")) %>% mutate(all_tw=all_tw/nsites,all_tp=all_tp/nsites) %>% select(-nsites)
+theta_inshore<- read_table("data/hpc/inshore_offshore/w20s4/inshore.w20s4.theta.pestPG.ragtag.txt",col_names = c("chr","pos","in_tw","in_tp","in_tajima","nsites")) %>% mutate(in_tw=in_tw/nsites,in_tp=in_tp/nsites) %>% select(-nsites)
+theta_offshore<- read_table("data/hpc/inshore_offshore/w20s4/offshore.w20s4.theta.pestPG.ragtag.txt",col_names = c("chr","pos","off_tw","off_tp","off_tajima","nsites")) %>% mutate(off_tw=off_tw/nsites,off_tp=off_tp/nsites) %>% select(-nsites)
+dxy <-read_table("data/hpc/inshore_offshore/w20s4/inshore_offshore.w20s4.getDxy.ragtag.txt",col_names = c("chr","pos","dxy")) %>% na.omit()
 ```
 
-```{r, fig.width=10.6, fig.height=5.8}
-meta_df <- fst %>% left_join(theta) %>% left_join(theta_inshore) %>% left_join(theta_offshore) %>% left_join(dxy) %>% left_join(offsets) %>% mutate(abs_pos=pos+offset) %>% mutate(covered=Nsites/50000)
+```{r, fig.width=10.6, fig.height=9.8}
+meta_df <- fst %>% left_join(theta) %>% left_join(theta_inshore) %>% left_join(theta_offshore) %>% left_join(dxy) %>% left_join(offsets) %>% mutate(abs_pos=pos+offset) %>% mutate(covered=Nsites/20000)
 
 meta_df %>%filter(covered>0.1) %>% pivot_longer(-c(chr,pos,abs_pos,length,offset,scaffold_num,Nsites,covered)) %>% 
   filter(name%in%c("fst","all_tp","all_tajima","in_tp","off_tp","dxy")) %>% 
-  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplanced")) %>% 
+  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplaced")) %>% 
   ggplot(aes(x=abs_pos/1e+6,y=value,color=chr_type)) + geom_point(size=1,alpha=.6) +
   geom_point(data=meta_df %>% filter(covered>0.1) %>%  mutate(q=quantile(fst,0.9999)) %>% filter(fst>q) %>% pivot_longer(-c(chr,pos,abs_pos,length,offset,scaffold_num)) %>% filter(name%in%c("fst","all_tp","all_tajima","in_tp","off_tp","dxy")),aes(x=abs_pos/1e+6,y=value),color="red",size=1) +
   labs(x="",y="") + scale_color_manual(values = c("#6caeff","#2b5d9b","grey"),guide="none") + 
-  theme_classic(base_size = 12) + theme(axis.ticks.x = element_blank(), axis.text.x = element_blank()) + facet_wrap(~name,ncol = 1,scales = "free_y")
-
+  theme_classic(base_size = 12) + theme(axis.text.x = element_blank()) + facet_wrap(~name,ncol = 1,scales = "free_y")+
+  scale_x_continuous(label = axis_chr$chr_id, breaks = axis_chr$centre/1e6)
 
 #plot small window
-meta_df %>%filter(covered>0.1) %>% pivot_longer(-c(chr,pos,abs_pos,length,offset,scaffold_num,Nsites,covered)) %>% 
+#meta_df %>%filter(covered>0.1) %>% pivot_longer(-c(chr,pos,abs_pos,length,offset,scaffold_num,Nsites,covered)) %>% 
   #filter(name%in%c("fst","all_tp","all_tajima","in_tp","off_tp","dxy"),abs_pos>100000,abs_pos<2400000) %>% 
-  filter(name%in%c("fst","all_tp","all_tajima","in_tp","off_tp","dxy"),chr=="chr1_RagTag") %>% 
-  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplanced")) %>% 
-  ggplot(aes(x=abs_pos/1e+6,y=value,color=chr_type)) + geom_point(size=1,alpha=.6) +
-  geom_point(data=meta_df %>% filter(covered>0.1) %>%  mutate(q=quantile(fst,0.9999)) %>% filter(fst>q) %>% pivot_longer(-c(chr,pos,abs_pos,length,offset,scaffold_num)) %>% filter(name%in%c("fst","all_tp","all_tajima","in_tp","off_tp","dxy")),aes(x=abs_pos/1e+6,y=value),color="red",size=1) +
-  labs(x="",y="") + scale_color_manual(values = c("#6caeff","#2b5d9b","grey"),guide="none") + 
-  theme_classic(base_size = 12) + theme(axis.ticks.x = element_blank(), axis.text.x = element_blank()) + facet_wrap(~name,ncol = 1,scales = "free_y")
+  #filter(name%in%c("fst","all_tp","all_tajima","in_tp","off_tp","dxy"),chr=="chr1_RagTag") %>% 
+  #mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplaced")) %>% 
+  #ggplot(aes(x=abs_pos/1e+6,y=value,color=chr_type)) + geom_point(size=1,alpha=.6) +
+  #geom_point(data=meta_df %>% filter(covered>0.1) %>%  mutate(q=quantile(fst,0.9999)) %>% filter(fst>q,chr=="chr1_RagTag") %>% pivot_longer(-c(chr,pos,abs_pos,length,offset,scaffold_num)) %>% filter(name%in%c("fst","all_tp","all_tajima","in_tp","off_tp","dxy")),aes(x=abs_pos/1e+6,y=value),color="red",size=1) +
+  #labs(x="",y="") + scale_color_manual(values = c("#6caeff","#2b5d9b","grey"),guide="none") + 
+  #theme_classic(base_size = 12) + theme(axis.ticks.x = element_blank(), axis.text.x = element_blank()) + facet_wrap(~name,ncol = 1,scales = "free_y")
 ```
 
-### 6. PCA based on SNPs in high Fst region
+**Figure 1:** A genomic landscape of different statistics between/within the north inshore reefs and offshore reefs. Red dots present the windows with top 0.01% fst values.
+
+No clear pattern observed from this plot, however, the genome-wide genetic diversity in inshore and offshore are well aligned suggest their high correlation. In the thesis, I focused on Fst outliers and inspected the gene involved in this region (Chr1). Also, I tested whether highly differentiated regions (defined as genomic islands) are also with elevated absolute divergence (dxy) which support the hypothesis of classical "genomic island of speciation" [cruickshank et al](https://onlinelibrary.wiley.com/doi/full/10.1111/mec.12796). We compared the dxy values in windows with top 1% of high Fst values and rest of the genome, windows with data as least of constitute 10% of the region were included.
+
+```{r readin-gene-annotation}
+gff<- read_table("data/hpc/annotation/aten_0.11.maker_post_001.genes.ragtag.gff",
+                 col_names =c("chr", "source", "feature", "start", "end", "score","strand", "frame", "attribute"))
+
+annotation <- read_tsv("data/hpc/annotation/annotation_table.tsv") %>% mutate(gene=str_remove(aten_id,"\\.m1$"))
+
+genes<-gff %>% filter(feature=="gene",chr=="chr1_RagTag",start>=1150000,end<=1350000) %>% 
+  mutate(gene=str_extract(attribute,"aten_0.1.m1.\\d+")) %>% select(chr,gene,start,end,strand) %>%
+  mutate(orientation=ifelse(strand=="+",1,-1),strand=ifelse(strand=="+","forward","reverse")) %>% 
+  mutate(shortid=str_remove(gene,"aten_0.1.m1."))
+
+genes_focus <- genes %>% filter(start>=1185000,end<=1290000)
+
+fst1k <- read_table("data/hpc/inshore_offshore/inshore_offshore.w1ks200.fst.ragtag.txt",col_names = c("chr","pos","Nsites","fst")) %>% mutate(fst=ifelse(fst<0,0,fst)) %>% 
+  left_join(offsets) %>% mutate(abs_pos=pos+offset) %>% mutate(covered=Nsites/1000)
+```
+
+```{r generate-figure, fig.align='center',fig.width=8.78, fig.height=6.56} 
+p1<-meta_df %>%filter(covered>0.1) %>% pivot_longer(-c(chr,pos,abs_pos,length,offset,scaffold_num,Nsites,covered)) %>% filter(name=="fst") %>% 
+   mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplaced")) %>% 
+  ggplot(aes(x=abs_pos/1e+6,y=value,color=chr_type)) + geom_point(size=2,alpha=.7) +
+  geom_point(data=meta_df %>% filter(covered>0.1) %>%  mutate(q=quantile(fst,0.9999)) %>% filter(fst>q) %>% pivot_longer(-c(chr,pos,abs_pos,length,offset,scaffold_num)) %>% filter(name=="fst"),aes(x=abs_pos/1e+6,y=value),color="red",size=1.8) +
+  geom_point(x=410,y=0.021,color="red",size=2)+geom_text(x=410,y=0.021,label="0.01% Outlier",hjust=-.1,color="black")+
+  labs(x="Chromosomes",y=expression("F"["ST"])) + scale_color_manual(values = c("#6caeff","#2b5d9b","grey"),guide="none") + 
+  theme_test(base_size = 12) + 
+  theme(axis.ticks.x = element_blank(),axis.text.x=element_text(face = "bold")) + 
+  scale_x_continuous(label = axis_chr$chr_id, breaks = axis_chr$centre/1e6) 
+
+p2<-ggplot() + labs(x="Chr 1 position (Mb)",y=expression("F"["ST"])) + scale_color_manual(values = c("#6caeff","#2b5d9b","grey"), guide="none") + 
+  geom_point(data=fst1k %>% filter(covered>0.1,chr=="chr1_RagTag",between(abs_pos,1150000,1350000)),aes(x=(abs_pos-500)/1e+6,y=fst),alpha=.8,shape=21,color="grey",size=1.5) +
+  stat_smooth(data=fst1k %>% filter(covered>0.1,chr=="chr1_RagTag",between(abs_pos,1160000,1350000)),aes(x=(abs_pos-500)/1e+6,y=fst),geom = 'line',
+              span=0.03,fullrange=F,se=F,alpha=.5,color="#0072B2",alpha=0.2,size=1)+
+  geom_gene_arrow(data=genes, aes(xmin = start/1e+6, xmax = end/1e+6,forward=orientation),y=-0.001,fill="lightgrey",alpha=.3,arrowhead_height = unit(3, "mm"), arrowhead_width = unit(1, "mm")) +
+  geom_gene_arrow(data=genes_focus, aes(xmin = start/1e+6, xmax = end/1e+6,forward=orientation),y=-0.001,fill="#00aeef",arrowhead_height = unit(3, "mm"), arrowhead_width = unit(1, "mm"))+
+  geom_text(data=genes_focus,aes(x = (start+end)/2e+6,y=-0.003,label=shortid),size=2)+
+  theme_test(base_size = 12)
+
+p3 <- left_join(fst,dxy)%>% mutate(covered=Nsites/20000) %>% filter(covered>0.1) %>% 
+  mutate(thres=quantile(fst,prob=0.99), type=ifelse(fst>thres,"Islands","Non-islands")) %>% 
+  pivot_longer(-c(chr,pos,thres,type,Nsites,covered),names_to = "stat") %>% 
+  ggplot(aes(x=stat,y=value,fill=type)) + geom_boxplot(width=.3,alpha=.6,fatten = NULL, show.legend = FALSE,outlier.alpha = 0.5,outlier.size = .3,outlier.color = "grey")+
+  stat_summary(fun.data = "mean_se", geom = "pointrange", show.legend = F, 
+               position = position_dodge(.275))+
+  introdataviz::geom_split_violin(alpha = .4, trim = FALSE)+
+  facet_wrap(~stat, scales = "free", strip.position = "left", labeller = as_labeller(c(fst = "F[ST]", dxy = "D[XY]"),label_parsed)) +
+  scale_fill_brewer(palette = "Dark2", name = "")+
+  theme_pubclean(base_size = 12) + labs(x="",y="")+
+  theme(strip.background = element_blank(),
+           strip.placement = "outside",
+            axis.ticks.x = element_blank(),
+            axis.text.x = element_blank(),legend.position = "bottom",legend.margin=margin(-25, 0, 0, 0)) 
+ 
+p1/(p2+p3+plot_layout(widths = c(0.55,0.45)))+plot_layout(heights = c(0.4,0.6))+plot_annotation(tag_levels = 'a',tag_suffix = ")") & 
+  theme(plot.tag = element_text(size = 12))
+
+#p23<-cowplot::plot_grid(p2,p3,rel_widths = c(0.55,0.45),labels = c("b)","c)"))
+#cowplot::plot_grid(p1,p23,nrow = 2,align = "h",labels = c("a)"),rel_heights = c(0.4,0.6))
+#ggsave("fig2.png",width = 8.78,height = 6.56)
+```
+
+**Figure 2:** Genome-wide divergence pattern between the north inshore reefs and offshore reefs. a) the Manhattan plot of genome-wide Fst values for overlapped 20kb windows with 4kb step size, red dots represent the top 0.01% outliers. b) The close-up view of the estimated Fst calculated in sliding windows of 1kb across the region of chromosome 1 surrounding the outliers. The coding regions of predicted genes were indicated below and genes within the high Fst region are coloured in blue with the arrows pointing transcriptional direction. The unique number id of each gene was used to label each gene for short. c) The boxplot and split violin plots for measures of relative divergence Fst and absolute divergence Dxy in the high Fst regions and low Fst regions. 
+
+### Genes within this Locus
+
+**Table 1**: The genes located in the Fst outlier region
 
 ```{r}
-covmat_locus <- read_table("data/hpc/inshore_offshore/locus/locus_Sc0000104_200000-240000.pcangsd.cov",col_names = F) %>% as.matrix()
+tmp<-annotation %>% mutate(gene=str_remove(aten_id,".m1$")) %>% select(gene,pfam,`Gene names`,`Protein names`,ipr_go,`Gene ontology IDs`)
+genes_focus %>% left_join(tmp) %>% select(-c(start,end,strand,chr,orientation)) %>% knitr::kable()
+```
+
+### Characterise the locus
+
+I checked the PCA result and minor allele frequency based on this locus, ~chr1_RagTag:1.18M-1.29M (Sc0000104:170000-280000). The number of SNPs within this regions: 1628
+
+```{r,fig.align='center',fig.width=8.78,fig.height=8.7}
+covmat_locus <- read_table("data/hpc/inshore_offshore/locus/Sc0000104_170000-280000_chr1_1.18-1.29m.pcangsd.cov",col_names = F) %>% as.matrix()
 sample_ids <- read_tsv("data/hpc/inshore_offshore/north187_sample_id.txt", col_names = "sample_id",show_col_types = FALSE) %>% pull(sample_id)
 colnames(covmat_locus)<- sample_ids
 rownames(covmat_locus) <- sample_ids
@@ -156,124 +229,57 @@ locus_pc1 <- round(((locus_eigen$values)/sum(locus_eigen$values))*100,2)[1]
 locus_pc2 <- round(((locus_eigen$values)/sum(locus_eigen$values))*100,2)[2]
 locus_pc3 <- round(((locus_eigen$values)/sum(locus_eigen$values))*100,2)[3]
 
-ggplot(locus_pca12, aes(x=x,y=y)) + geom_point(aes(color=reef),size=2)+ scale_color_manual(values = cbp1) +
+pl1<-ggplot(locus_pca12, aes(x=x,y=y)) + geom_point(aes(color=reef),size=1.5)+ scale_color_manual(values = cbp1,guide="none") +
   #scale_color_manual(values = site_colors(), labels=site_labels()) + 
-  theme_test(base_size = 12) + labs(x=paste0("PC1 (",locus_pc1,"%)"),y=paste0("PC2 (",locus_pc2,"%)"), shape="", color="")
+  theme_test(base_size = 12) + labs(x=paste0("PC1 (",locus_pc1,"%)"),y=paste0("PC2 (",locus_pc2,"%)"))
 
-
-#pc1 loading in populations
-ggplot(locus_pc1_loading, aes(x=reorder(pop,pop_order),y=pc1,color=reorder(pop,pop_order))) + #geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
-  geom_jitter(size=2,width = 0.15)+
+#pc1 loading by populations
+pl2<-ggplot(locus_pc1_loading, aes(x=reorder(pop,pop_order),y=pc1,color=reorder(pop,pop_order))) + #geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
+  geom_jitter(size=1.5,width = 0.15,alpha=.8)+
   #geom_point()+
   scale_color_manual(values = site_colors(),guide="none") + 
-  theme_pubr(base_size = 12) + labs(y=paste0("PC1 (",locus_pc1,"%)"),x="", color="")
+  theme_pubr(base_size = 12) + labs(y="PC1", x="") + coord_flip()
 
-#pc1 loading in reefs
-ggplot(locus_pc1_loading, aes(x=reef,y=pc1,color=reef)) + #geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
-  geom_jitter(size=2,alpha=.6,width = 0.1)+scale_color_manual(values = cbp1) +
+#pc1 loading by reefs
+pl3<-ggplot(locus_pc1_loading, aes(x=reef,y=pc1,color=reef)) + #geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
+  geom_jitter(size=1.5,alpha=.6,width = 0.1)+scale_color_manual(values = cbp1) +
   #geom_point()+
   #scale_color_manual(values = site_colors(), labels=site_labels()) + 
-  theme_pubr(base_size = 12) + labs(y=paste0("PC1 (",locus_pc1,"%)"),x="", color="")
-```
-I then checked the Maf distribution in this region
+  theme_pubr(base_size = 12) + labs(y="PC1", x="",color="") + 
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),legend.position = c(0.5,0.95),legend.direction  = "horizontal")+coord_flip() 
 
-```{r, fig.height=3, fig.width=3}
-maf_inshore <- read_table("data/hpc/inshore_offshore/locus/inshore.Sc0000104_200000-240000.SNPs.maf",skip = 1,col_names = c("chr","pos","major","minor","ref","anc","maf","nind")) %>% add_column(pop="inshore")
-maf_offshore <- read_table("data/hpc/inshore_offshore/locus/offshore.Sc0000104_200000-240000.SNPs.maf",skip = 1,col_names = c("chr","pos","major","minor","ref","anc","maf","nind")) %>% add_column(pop="offshore")
+maf_inshore <- read_table("data/hpc/inshore_offshore/locus/inshore.Sc0000104_170000-280000_chr1_1.18-1.29m.SNPs.mafs",skip = 1,col_names = c("chr","pos","major","minor","ref","anc","maf","nind")) %>% add_column(pop="inshore")
+maf_offshore <- read_table("data/hpc/inshore_offshore/locus/offshore.Sc0000104_170000-280000_chr1_1.18-1.29m.SNPs.mafs",skip = 1,col_names = c("chr","pos","major","minor","ref","anc","maf","nind")) %>% add_column(pop="offshore")
 df_maf <- rbind(maf_inshore,maf_offshore)
 
-df_maf %>% ggplot(aes(x=maf,fill=pop)) + 
+pl4<-df_maf %>% ggplot(aes(x=maf,fill=pop)) + 
   geom_histogram(color="black",position="identity",alpha=.6,binwidth = 0.01) + 
-  theme_pubr() + scale_fill_manual(values = cbp1, label=c("North Inshore","Offshore")) + labs(x="Minor allele frequency",y="Number of loci", fill="")
+  theme_pubr() + scale_fill_manual(values = cbp1, label=c("North Inshore","Offshore"),guide="none") + labs(x="Minor allele frequency",y="Number of loci", fill="")
+
+((pl1+pl3)/(pl2+pl4)) +
+  plot_annotation(title = "Locus Sc0000104:170000-280000 (Chr1:1.18M-1.29M)",tag_levels = "a",tag_suffix = ")") &theme(plot.tag = element_text(size = 12))
+#ggsave("s-fig-locus.png",height = 6.78,width = 6.78)
 ```
 
+**Figure 3:** Characterisation of Fst outlier. a) PCA analysis based on SNPs located in the Fst outlier region. b) and c) The distribution of samples along PC1 by population and location, respectively. d) Histogram of the minor allele frequency between inshore and offshore.
 
 
 
-### 7. Selection based on PCANGSD
+**PS: notes for myself**
 
-```{r cache=TRUE}
-#library(RcppCNPy)
-#C <- as.matrix(read.table("data/hpc/inshore_offshore/north_187.pcangsd.cov")) # Reads in estimated covariance matrix
-#D <- npyLoad("data/hpc/inshore_offshore/north_187.pcangsd.selection.npy") # Reads PC based selection statistics
-
-#read_table("data/hpc/inshore_offshore/north_187.pcangsd.pos",col_names = c("chr","pos")) %>% add_column(stats=D,pval=pchisq(stats, 1, lower.tail=FALSE)) %>% write.table("data/hpc/inshore_offshore/north_187.pcangsd.selection.txt",quote = F,row.names = F,sep = "\t",col.names = F)
-
-pcangsd_df<- read_table("data/hpc/inshore_offshore/north_187.pcangsd.selection.ragtag.txt",col_names = c("chr","pos","score","pval"))
-
-fdr005<- pcangsd_df %>% mutate(logp=-log10(pval),fdr=p.adjust(pval)) %>% filter(fdr<=0.05) %>% arrange(desc(fdr)) %>% top_n(1) %>% pull(pval) 
-
-pcangsd_df %>% left_join(offsets) %>% mutate(abs_pos=pos+offset) %>% #filter(chr=="chr1_RagTag") %>% 
-  #filter(abs_pos>0,abs_pos<3000000) %>% 
-  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplanced")) %>% 
-  ggplot(aes(x=abs_pos/1e+6,y=-log10(pval),color=chr_type)) + geom_point(size=1,alpha=.6) +
-  geom_hline(yintercept = -log10(fdr005),color="red") +
-  labs(y="-log10(P)",x="Chromosome") + scale_color_manual(values = c("#6caeff","#2b5d9b","grey"),guide="none") + 
-  theme_classic(base_size = 12) + theme(axis.ticks.x = element_blank(), axis.text.x = element_blank()) 
-```
-
-**Figure: Manhattan plot of the selection statistics from PCAngsd applied to north GBR samples. Red horizontal line is the Bonferroni adjusted significance level (FDR<0.05).**
-
-Interestingly, pcangsd revealed several regions with SNPs significantly deviated from the PCA clustering. We then extracted these regions to only implement PCA analysis with them.
-
-```{r}
-#read_table("data/hpc/inshore_offshore/north_187.pcangsd.selection.txt",col_names = c("chr","pos","score","pval")) %>% filter(pval<fdr005) %>% select(chr,pos) %>% write.table("north_187.pcangsd_selection.sig005.pos",quote = F,sep = "\t",row.names = F,col.names = F)
-
-covmat <- read_table("data/hpc/inshore_offshore/pcangsd_sig005/north_187_sig005.pcangsd.cov",col_names = F) %>% as.matrix()
-#covmat <- read_table("data/hpc/inshore_offshore/pcangsd_sig005/Sc0000013_chr1_RagTag.pcangsd.cov",col_names = F) %>% as.matrix()
-sample_ids <- read_tsv("data/hpc/inshore_offshore/north187_sample_id.txt", col_names = "sample_id",show_col_types = FALSE) %>% pull(sample_id)
-colnames(covmat)<- sample_ids
-rownames(covmat) <- sample_ids
-pop_eigen <- eigen(covmat)
-sample_table <- read_csv("data/hpc/qc/summary_data.csv",show_col_types = FALSE) %>% select(sample_id,pop,location,reef) %>% mutate(reef=ifelse(reef=="Outer","Offshore","Inshore"))
-pc1_loading <- data.frame(pc1=pop_eigen$vectors[,1],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
-pc2_loading <- data.frame(pc1=pop_eigen$vectors[,2],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
-pop_pca12 <- data.frame(x=pop_eigen$vectors[,1],y=pop_eigen$vectors[,2],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
-pop_pca23 <- data.frame(x=pop_eigen$vectors[,2],y=pop_eigen$vectors[,3],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
-pc1 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[1]
-pc2 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[2]
-pc3 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[3]
-
-ggplot(pop_pca12, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
-  scale_color_manual(values = site_colors(), labels=site_labels()) + 
-  theme_test(base_size = 12) + labs(x=paste0("PC1 (",pc1,"%)"),y=paste0("PC2 (",pc2,"%)"), shape="Location", color="Reef")
-
-
-#pc1 loading in populations
-ggplot(pc1_loading, aes(x=reorder(pop,pop_order),y=pc1,color=reorder(pop,pop_order))) + #geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
-  geom_jitter(size=2,alpha=.8,width = 0.15)+
-  #geom_point()+
-  scale_color_manual(values = site_colors(),guide="none") + 
-  theme_pubr(base_size = 12) + labs(y=paste0("PC1 (",pc1,"%)"),x="", shape="", color="")
-
-#pc1 loading in reefs
-ggplot(pc1_loading, aes(x=reef,y=pc1,color=reef)) + #geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
-  geom_jitter(size=2,alpha=.8,width = 0.1)+scale_color_manual(values = cbp1) +
-  #geom_point()+
-  #scale_color_manual(values = site_colors(), labels=site_labels()) + 
-  theme_pubr(base_size = 12) + labs(y=paste0("PC1 (",pc1,"%)"),x="", shape="", color="")
-
-```
-
-**PS: check dxy vs Fst**
-
-Here, we tested whether there are regions could be identified as classical genomic islands of speciation. There genomic islands are characterised as high relative divergece (Fst) and high absolute divergence (dxy). We compared the dxy values in windows with top 1% of high Fst values and rest of the genome, windows with data as least of constitute 10% of the region were included.
-
-```{r}
-dxy2 <- read_tsv("data/hpc/inshore_offshore/inshore_offshore.w50s10.dxy.ragtag.txt",col_names = c("chr","pos","dxy2")) 
+```{r, fig.height=3.2}
+dxy2 <- read_tsv("data/hpc/inshore_offshore/w50s10/inshore_offshore.w50s10.dxy.ragtag.txt",col_names = c("chr","pos","dxy2")) 
 
 left_join(fst,dxy) %>% left_join(dxy2) %>% mutate(covered=Nsites/50000) %>% filter(covered>0.1) %>% 
   mutate(thres=quantile(fst,prob=0.99), type=ifelse(fst>thres,"High Fst","Low Fst")) %>% 
   pivot_longer(-c(chr,pos,thres,type,Nsites,covered),names_to = "stat") %>% 
   ggplot(aes(x=type,y=value)) + geom_boxplot(notch = T) +facet_wrap(~stat,scales = "free") +
   theme_bw() + labs(x="",y="Statistics",color="")
-
 ```
-
-
 
 dxy: getDxy.pl 算出来150M sites into windows。 50M sites 因为不是biallelic被忽略了.
 dxy2: 我的python code算出来200M sites into windows, including non-biallelic sites
 
 conclusion: it got slightly lower means with all site dxy values (with non-biallelic sites) than only-biallelic sites(getDxy.pl). However, it won't affect the distribution. 我感觉包括了non-biallelic后，那些低dxy的sites更多了，说明那些多出来的sites都是一些divergence不大的位点。it make sense，在angsd结果中被认为是triallelic一般都是non-common variant（指出现频率很低）或者sequencing error。这种算出来的值就很低。
+
 
