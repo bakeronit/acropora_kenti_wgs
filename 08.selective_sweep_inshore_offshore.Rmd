@@ -264,6 +264,25 @@ pl4<-df_maf %>% ggplot(aes(x=maf,fill=pop)) +
 **Figure 3:** Characterisation of Fst outlier. a) PCA analysis based on SNPs located in the Fst outlier region. b) and c) The distribution of samples along PC1 by population and location, respectively. d) Histogram of the minor allele frequency between inshore and offshore.
 
 
+### Genetic diversity
+
+```{r,fig.height=5,fig.align='center',fig.width=5.7}
+pi_stat<-meta_df %>% filter(covered>0.1) %>% select(chr,pos,in_tp,off_tp) %>% na.omit() %>% pivot_longer(-c(chr,pos)) %>% group_by(name) %>% summarise(mean=mean(value),sd=sd(value))
+
+
+meta_df %>% filter(covered>0.1) %>% ggplot(aes(x=in_tp,y=off_tp)) + geom_point(alpha=0.1, color="darkgrey",size=2) + 
+  geom_point(data=meta_df %>% filter(covered>0.1) %>% mutate(q=quantile(fst,0.9999)) %>% filter(fst>q,chr=="chr1_RagTag"), aes(x=in_tp,y=off_tp),color="red",alpha=.6,size=2) +
+  theme_bw(base_size = 12) +
+  labs(x=expression(pi[" Inshore"]),y=expression(pi[" Offshore"]),color="")+ 
+  geom_vline(data=pi_stat,aes(xintercept = mean,color=name)) +
+  scale_color_manual(values=cbp1,labels=c(expression(paste(bar(pi)["inshore"], " (",0.0124%+-%0.007,")",sep = "")),expression(paste(bar(pi)["offshore"], " (",0.0121%+-%0.007,")",sep = "")))) + theme(legend.position = c(0.4,0.95),legend.background = element_blank()) +
+  stat_cor(method = "pearson", label.x = 0.045,label.y = 0.005)
+
+
+#ggsave("s-fig-pi-corr.png",width = 5.7,height = 5)
+```
+
+
 
 **PS: notes for myself**
 
