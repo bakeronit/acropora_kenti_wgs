@@ -185,6 +185,7 @@ p3 <- left_join(fst,dxy)%>% mutate(covered=Nsites/20000) %>% filter(covered>0.1)
   introdataviz::geom_split_violin(alpha = .4, trim = FALSE)+
   facet_wrap(~stat, scales = "free", strip.position = "left", labeller = as_labeller(c(fst = "F[ST]", dxy = "D[XY]"),label_parsed)) +
   scale_fill_brewer(palette = "Dark2", name = "")+
+  stat_compare_means(method = "wilcox.test",label = "p.signif")+
   theme_pubclean(base_size = 12) + labs(x="",y="")+
   theme(strip.background = element_blank(),
            strip.placement = "outside",
@@ -280,6 +281,24 @@ meta_df %>% filter(covered>0.1) %>% ggplot(aes(x=in_tp,y=off_tp)) + geom_point(a
 
 
 #ggsave("s-fig-pi-corr.png",width = 5.7,height = 5)
+```
+
+### Genetic diversity in islands
+
+```{r}
+meta_df %>% filter(covered>0.1) %>% mutate(thres=quantile(fst,prob=0.99), type=ifelse(fst>thres,"Islands","Non-islands")) %>% 
+  pivot_longer(-c(chr,pos,thres,type,Nsites,covered),names_to = "stat") %>% filter(stat%in%c("in_tp","off_tp")) %>% 
+  ggplot(aes(x=stat,y=value,fill=type)) + geom_boxplot(width=.3,alpha=.6,outlier.alpha = 0.8,outlier.color = "grey") +
+  stat_compare_means(method = "wilcox.test",label = "p.signif")+
+  scale_fill_brewer(palette = "Dark2", name = "")+
+  scale_x_discrete(labels=c("in_tp" = expression(pi["Inshore"]), "off_tp" = expression(pi["Offshore"])))+
+  theme_pubclean(base_size = 12) + labs(x="",y="")+
+  theme(strip.background = element_blank(),
+           strip.placement = "outside",
+            axis.ticks.x = element_blank(),
+            legend.position = "bottom",legend.margin=margin(-25, 0, 0, 0)) 
+
+#ggsave("s-fig-pi_islands.png",height = 3.2,width = 4.2)
 ```
 
 

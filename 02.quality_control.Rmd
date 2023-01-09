@@ -146,3 +146,11 @@ legend('topright', legend = c(paste('1% thres:', q01.threshold, sep=''), paste('
 ```
 
 Eventually, we removed scaffolds with a length shorter than 1Mb, and resulted in 263,710,454 accessible bases in A.tenius reference genome assembly. In ANGSD genotype likelihood computation, we used minDepth=17 and maxDepth=1102 as arguments. We also excluded those regions outside the depth range in other analysis, such Fst, theta statistc, IBS, etc. We refer this filtered reference bases as `actual_ref` which include 258,421,687 bases and analysis we did were based on these positions consistently, if not mentioned.
+
+### notes:
+
+In relatedness analysis, we found samples from Magnetic Island are more closed to each other.
+```{r}
+ggplot(res,aes(x=R1,y=KING,label=name)) + geom_point(color="blue3",size=1)+
+geom_point(data=res %>% filter(grepl("MI",a_name),grepl("MI",b_name)),color="brown")
+```

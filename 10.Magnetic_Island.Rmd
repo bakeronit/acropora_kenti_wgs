@@ -1,0 +1,71 @@
+---
+title: "Genomic Island between North Inshore reefs and reefs of Magnetic Island"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.retina = 2)
+library(tidyverse)
+library(ggpubr)
+library(knitr)
+library(patchwork)
+source("scripts/my_color.R")
+offsets <- read_tsv("data/hpc/ragtag/ragtag.scaffold_lengths.txt", col_names = c("chr","length"),show_col_types = FALSE) %>% 
+  arrange(desc(length)) %>%
+  mutate(offset=lag(cumsum(length),default=0)) %>% 
+  mutate(scaffold_num=row_number())
+
+```
+
+
+```{r}
+fst <- read_tsv("data/hpc/north_MI/NI_MI.w20s4.fst.ragtag.txt",col_names = c("chr","pos","Nsites","fst")) %>% mutate(fst=ifelse(fst<0,0,fst))
+dxy <- read_tsv("data/hpc/north_MI/NI_MI.w20s4.getDxy.ragtag.txt",col_names = c("chr","pos","dxy"))
+theta_NI <- read_tsv("data/hpc/north_MI/NI.w20s4.theta.pestPG.ragtag.txt",col_names = c("chr","pos","NI_tw","NI_tp","NI_tajima","nsites")) %>% mutate(NI_tw=NI_tw/nsites,NI_tp=NI_tp/nsites) %>% select(-nsites)
+theta_MI <- read_tsv("data/hpc/north_MI/MI.w20s4.theta.pestPG.ragtag.txt",col_names = c("chr","pos","MI_tw","MI_tp","MI_tajima","nsites")) %>% mutate(MI_tw=MI_tw/nsites,MI_tp=MI_tp/nsites) %>% select(-nsites)
+
+meta_df <- left_join(fst,dxy) %>% left_join(theta_NI) %>% left_join(theta_MI) %>% left_join(offsets) %>% mutate(abs_pos=pos+offset) %>% mutate(covered=Nsites/20000)
+
+meta_df %>% filter(covered>0.1) %>% pivot_longer(-c(chr,pos,abs_pos,length,offset,scaffold_num,Nsites,covered)) %>% 
+  filter(name%in%c("fst","NI_tp","MI_tp","dxy")) %>% 
+  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplanced")) %>% 
+  ggplot(aes(x=abs_pos/1e+6,y=value,color=chr_type)) + geom_point(size=1,alpha=.6) +
+  #geom_point(data=meta_df %>% filter(covered>0.05) %>%  mutate(q=quantile(fst,0.9999)) %>% filter(fst>q) %>% pivot_longer(-c(chr,pos,abs_pos,length,offset,scaffold_num,Nsites,covered)) %>% filter(name%in%c("fst","NI_tp","MI_tp","dxy")),aes(x=abs_pos/1e+6,y=value),color="red",size=1) +
+  labs(x="",y="") + scale_color_manual(values = c("#6caeff","#2b5d9b","grey"),guide="none") + 
+  theme_classic(base_size = 12) + theme(axis.ticks.x = element_blank(), axis.text.x = element_blank()) + facet_wrap(~name,ncol = 1,scales = "free_y")
+
+```
+
+We didn't observe agreements between relative divergence (fst) and absolute diversity(dxy). As a matter of fact, the dxy values are lower in those high Fst regions, suggests they result from recurrent selections before and after speciation which means they have low nucleotide diversity in the ancestor population.
+
+```{r}
+#left_join(fst,dxy) %>% mutate(thresh_fst=quantile(fst,prob=0.99), thresh_dxy=quantile(dxy,prob=0.99,na.rm = T)) %>% filter(fst>thresh_fst,dxy>thresh_dxy)
+
+p1<-left_join(fst,dxy) %>% left_join(theta_MI) %>% left_join(theta_NI)%>% filter(Nsites/20000>0.1) %>% mutate(thres=quantile(fst,prob=0.99),type=ifelse(fst>thres,"Islands","Non-islands")) %>% 
+  pivot_longer(-c(chr,pos,thres,type,Nsites),names_to = "stat") %>% filter(stat%in%c("dxy","MI_tp","NI_tp")) %>% 
+  ggplot(aes(x=stat,y=value,fill=type)) + geom_boxplot(width=.8,alpha=.6,outlier.alpha = 0.8,outlier.color = "grey",outlier.size = .8) +
+  stat_compare_means(method = "wilcox.test",label = "p.signif",vjust = 0.5,hjust=0.5)+
+  scale_fill_brewer(palette = "Dark2", name = "")+
+  facet_wrap(~stat,scales = "free",strip.position = "left", labeller = as_labeller(c(dxy = "D[XY]","MI_tp"="pi[MI]","NI_tp"="pi[Inshore]"),label_parsed)) +
+  theme_pubclean(base_size = 12) + labs(x="",y="")+
+  theme(strip.background = element_blank(),
+        axis.text.x = element_blank(),
+           strip.placement = "outside",
+            axis.ticks.x = element_blank(),
+            legend.position = "bottom",legend.margin=margin(-25, 0, 0, 0)) 
+p1
+```
+
+
+```{r}
+p2<-fst %>% left_join(theta_NI) %>% left_join(theta_MI) %>% mutate(covered=Nsites/20000) %>% filter(covered>0.1) %>% 
+  ggplot(aes(x=log(MI_tp)-log(NI_tp),y=fst)) + 
+  geom_point(alpha=.6,color="darkgrey") + labs(x=expression(paste("LogRatio ",(pi["MI"]/pi["Inshore"]))),y=expression(F["ST"])) + theme_bw()
+p2
+
+(p1|p2) + plot_layout(widths = c(0.57,0.43)) + plot_annotation(tag_levels = "a",tag_suffix = ")")
+#ggsave("fig-2.4.png",width = 6.87,height = 3)
+```
+
+
+We didn't oberve elevated absolute divergence (dxy) in highly diverged regions (high fst), which suggests there is no strong evidence for gene flow barrier in those regions. Meanwhile, low levels of nucleotide diversity were observed in both north inshore group and corals from magnetic island suggest selection reduced the genetic diversity in those highly diverged regions result in high relative divergence.

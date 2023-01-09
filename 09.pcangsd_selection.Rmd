@@ -1,0 +1,215 @@
+---
+title: "Detecting selection based on PCA (PCAngsd)"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.retina = 2)
+library(tidyverse)
+library(ggpubr)
+library(patchwork)
+library(clusterProfiler)
+library(valr)
+library(GOfuncR)
+source("scripts/my_color.R")
+
+offsets <- read_tsv("data/hpc/ragtag/ragtag.scaffold_lengths.txt", col_names = c("chr","length"),show_col_types = FALSE)
+chr_order<-offsets$chr %>% str_order(numeric = T)
+offsets <- offsets[chr_order,] %>% mutate(offset=lag(cumsum(length),default=0)) %>% 
+  mutate(scaffold_num=row_number())
+
+cbp1 <- c("#E69F00", "#56B4E9", "#009E73",
+          "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+axis_chr<- offsets %>% group_by(chr) %>% summarise(centre=offset+length/2) %>% mutate(chr_id=ifelse(grepl(chr,pattern="chr"),chr,"Unplaced")) %>% group_by(chr_id) %>% summarise(centre=(max(centre)+min(centre))/2) %>% mutate(chr_id=str_remove(chr_id,"_RagTag"),chr_id=str_remove(chr_id,"chr"))
+```
+
+
+We used PCAngsd to scan for any SNP outlier in the north GBR of our samples
+
+```bash
+angsd -bam all_187_bam.list -ref ${ref} -anc ${ref} -C 50 \
+        -GL 2 -doGlf 2 -sites ${bed} -doMaf 1 -doCounts 1 -minQ 30 -minMapQ 30 -skipTriallelic 1 \
+        -nThreads 40 -uniqueOnly 1 -doMajorMinor 1  -minInd 100 -minmaf 0.05 -SNP_pval 1e-6 \
+        -out north_187_SNPs
+        
+pcangsd.py -beagle north_187_SNPs.beagle.gz -selection -minMaf 0.05 -threads 2 -o north_187.pcangsd -sites_save
+```
+
+### Selection based on PCANGSD
+
+```{r cache=TRUE}
+#library(RcppCNPy)
+#C <- as.matrix(read.table("data/hpc/inshore_offshore/north_187.pcangsd.cov")) # Reads in estimated covariance matrix
+#D <- npyLoad("data/hpc/inshore_offshore/north_187_LDpruned.pcangsd.selection.npy") # Reads PC based selection statistics
+
+#read_table("data/hpc/inshore_offshore/north_187_SNPs_LDpruned.pos",col_names = c("chr","pos")) %>% add_column(stat=D,pval=pchisq(stat, 1, lower.tail=FALSE)) %>% write.table("data/hpc/inshore_offshore/north_187_LDpruned.pcangsd.selection.txt",quote = F,row.names = F,sep = "\t",col.names = F)
+
+pcangsd_df<- read_table("data/hpc/inshore_offshore/north_187.pcangsd.selection.ragtag.txt",col_names = c("chr","pos","stat","pval"))
+#pcangsd_df<- read_table("data/hpc/inshore_offshore/north_187_LDpruned.pcangsd.selection.ragtag.txt",col_names = c("chr","pos","stat","pval"))
+
+fdr005<- pcangsd_df %>% mutate(fdr=p.adjust(pval)) %>% filter(fdr<=0.05) %>% arrange(desc(fdr)) %>% top_n(1) %>% pull(pval) 
+
+p1<-
+  pcangsd_df %>% left_join(offsets) %>% mutate(abs_pos=pos+offset) %>% 
+  #filter(between(pos,23974977,27104186),chr=="chr2_RagTag") %>% 
+  #filter(between(abs_pos,40861073,42696213)) %>% 
+  #filter(between(pos,1064505,1418853),chr=="chr11_RagTag") %>% 
+  #filter(between(pos,19072701,22172701),chr=="chr7_RagTag") %>% 
+  #filter(chr=="Sc0000151_RagTag",between(pos,507351,815349)	) %>% 
+  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplaced")) %>% 
+  ggplot(aes(x=abs_pos/1e+6,y=-log10(pval),color=chr_type)) + geom_point(size=1,alpha=.6) +
+  geom_hline(yintercept = -log10(fdr005),color="red",linetype="dashed") +
+  geom_text(data=pcangsd_df %>% left_join(offsets) %>% mutate(abs_pos=pos+offset) %>% filter(pval<=1e-10) %>% group_by(chr) %>% filter(pval==min(pval)),
+             aes(x=abs_pos/1e+6,y=-log10(pval)),label=c("L2","L1","L3"),color="black",hjust=-0.3) + 
+  labs(y="-log10(P)",x="") + scale_color_manual(values = c("#6caeff","#2b5d9b","grey"),guide="none") + 
+  theme_classic(base_size = 12) + theme(axis.ticks.x = element_blank()) + 
+  scale_x_continuous(label = axis_chr$chr_id, breaks = axis_chr$centre/1e6)
+
+p1
+```
+
+**Figure 1:** Manhattan plot of the selection statistics from PCAngsd applied to north GBR samples. Red horizontal line is the Bonferroni adjusted significance level (FDR<0.05).
+
+Interestingly, pcangsd revealed several regions with SNPs significantly deviated from the PCA clustering. We then extracted these regions to only implement PCA analysis with them.
+
+```{r}
+#read_table("data/hpc/inshore_offshore/north_187.pcangsd.selection.txt",col_names = c("chr","pos","score","pval")) %>% filter(pval<fdr005) %>% select(chr,pos) %>% write.table("north_187.pcangsd_selection.sig005.pos",quote = F,sep = "\t",row.names = F,col.names = F)
+
+sample_ids <- read_tsv("data/hpc/inshore_offshore/north187_sample_id.txt", col_names = "sample_id",show_col_types = FALSE) %>% pull(sample_id)
+sample_table <- read_csv("data/hpc/qc/summary_data.csv",show_col_types = FALSE) %>% select(sample_id,pop,location,reef) %>% mutate(reef=ifelse(reef=="Outer","Offshore","Inshore"))
+
+l1_covmat <- read_table("data/hpc/inshore_offshore/pcangsd_sig005/Sc0000013_chr1_RagTag.pcangsd.cov",col_names = F) %>% as.matrix()
+l2_covmat <- read_table("data/hpc/inshore_offshore/pcangsd_sig005/Sc0000135_chr11_RagTag.pcangsd.cov",col_names = F) %>% as.matrix()
+l3_covmat <- read_table("data/hpc/inshore_offshore/pcangsd_sig005/Sc0000214_Sc0000151_RagTag.pcangsd.cov",col_names = F) %>% as.matrix()
+la_covmat <- read_table("data/hpc/inshore_offshore/pcangsd_sig005/Sc0000185_chr2a_RagTag.pcangsd.cov",col_names = F) %>% as.matrix()
+lb_covmat <- read_table("data/hpc/inshore_offshore/pcangsd_sig005/Sc0000097_chr2b_RagTag.pcangsd.cov",col_names = F) %>% as.matrix()
+
+
+pc_plots <- function(covmat) {
+  colnames(covmat)<- sample_ids
+  rownames(covmat) <- sample_ids
+  pop_eigen <- eigen(covmat)
+  pc1_loading <- data.frame(pc1=pop_eigen$vectors[,1],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+  pc2_loading <- data.frame(pc1=pop_eigen$vectors[,2],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+  pop_pca12 <- data.frame(x=pop_eigen$vectors[,1],y=pop_eigen$vectors[,2],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+  pop_pca23 <- data.frame(x=pop_eigen$vectors[,2],y=pop_eigen$vectors[,3],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+  pc1 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[1]
+  pc2 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[2]
+  pc3 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[3]
+
+  pca_plot<-ggplot(pop_pca12, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
+  scale_color_manual(values = site_colors(), labels=site_labels()) + 
+  theme_test(base_size = 12) + labs(x=paste0("PC1 (",pc1,"%)"),y=paste0("PC2 (",pc2,"%)"), shape="Location", color="Reef")
+
+
+  #pc1 loading in populations
+  pc1_pop_plot<-ggplot(pc1_loading, aes(x=reorder(pop,pop_order),y=pc1,color=reorder(pop,pop_order))) + #geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
+    geom_jitter(size=2,alpha=.8,width = 0.15)+
+    #geom_point()+
+    scale_color_manual(values = site_colors(),guide="none") + 
+    theme_pubr(base_size = 12) + labs(y=paste0("PC1 (",pc1,"%)"),x="", shape="", color="")
+
+  #pc1 loading in reefs
+  pc1_reef_plot<-ggplot(pc1_loading, aes(x=reef,y=pc1,color=reef)) + #geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
+    geom_jitter(size=2,alpha=.8,width = 0.1)+scale_color_manual(values = cbp1,guide="none") +
+    #geom_point()+
+    #scale_color_manual(values = site_colors(), labels=site_labels()) + 
+    theme_pubr(base_size = 12) + labs(y=paste0("PC1 (",pc1,"%)"),x="", shape="", color="")
+  
+  plots<-list(pca_plot,pc1_pop_plot,pc1_reef_plot)
+  return(plots)
+  }
+
+```
+
+**Notes:** After manual checks, signals from chr2 are composed of two scaffolds of A.tenuis genome assembly.
+
+```{r}
+gff<- read_table("data/hpc/annotation/aten_0.11.maker_post_001.genes.gff",
+                 col_names =c("chr", "source", "feature", "start", "end", "score","strand", "frame", "attribute")) %>% rename("chrom"=chr)
+annotation <- read_tsv("data/hpc/annotation/annotation_table.tsv") %>% mutate(geneid=str_remove(aten_id,"\\.m1$"))
+
+
+#pcangsd_df %>% filter(pval<fdr005, chr%in%c("chr1_RagTag","chr11_RagTag","Sc0000151_RagTag")) %>% 
+#sig_genes_old <-pcangsd_df %>% filter(pval<=fdr005) %>% 
+    #group_by(chr) %>% filter(pval==min(pval)) %>% 
+#  group_by(chr) %>% summarise(start=min(pos),end=max(pos)) %>% 
+    #left_join(gff) %>% filter(pos>start-100000,pos<end+100000, feature=="gene")
+#  left_join(gff,by="chr") %>% filter((start.y>=start.x & start.y<end.x)|(end.y>=start.x &end.y<=end.x), feature=="gene") %>% 
+#  mutate(geneid=str_extract(attribute,"aten_0.1.m1.(\\d+)")) %>% select(chr,start.x,end.x,geneid) %>% 
+#  left_join(annotation) %>% 
+#  mutate(`Gene ontology IDs`=ifelse(is.na(`Gene ontology IDs`),ipr_go,`Gene ontology IDs`)) %>% drop_na(`Gene ontology IDs`) %>% 
+#  select(chr,start.x,end.x,geneid,aten_id,`Gene ontology IDs`,`Gene names`)
+
+
+#sig_genes_old2 <- pcangsd_df %>% filter(pval<=fdr005) %>% group_by(chr)  %>% 
+#  summarise(start=min(pos),end=max(pos),lead_snp=pos[which(pval==min(pval))],top_p=min(pval)) %>% rename("chrom"=chr) %>% 
+#  bed_closest(gff %>% filter(feature=="gene")) %>% mutate(geneid=str_extract(attribute.y,"aten_0.1.m1.(\\d+)")) %>% 
+#  select(chrom,start.x, end.x,geneid,lead_snp.x,top_p.x) %>% left_join(annotation) %>% 
+#  select(chrom,start.x,end.x,,lead_snp.x,top_p.x,geneid,aten_id,`Gene ontology IDs`,`Gene names`)
+
+pcangsd_df_1<- read_table("data/hpc/inshore_offshore/north_187.pcangsd.selection.txt",col_names = c("chr","pos","stat","pval"))
+sig_genes <- pcangsd_df_1%>% filter(pval<=fdr005) %>% rename("chrom"=chr) %>% mutate(start=pos,end=pos) %>% bed_closest(gff %>% filter(feature=="gene")) %>% 
+  mutate(geneid=str_extract(attribute.y,"aten_0.1.m1.(\\d+)")) %>% select(chrom,pos.x,pval.x,geneid) %>% 
+  group_by(chrom) %>% 
+  summarise(start=min(pos.x),end=max(pos.x),lead_snp=pos.x[which(pval.x==min(pval.x))],top_p=min(pval.x),n_snp=length(pos.x %>% unique),geneids=paste(geneid %>% unique,collapse = ";")) %>% distinct() %>% separate_rows(geneids,sep=";") %>% left_join(annotation,by = c("geneids"="geneid")) 
+
+
+p2<-pc_plots(l1_covmat)[3][[1]] + xlab("L1")
+p3<-pc_plots(l2_covmat)[3][[1]] + xlab("L2")
+p4<-pc_plots(l3_covmat)[3][[1]] + xlab("L3")
+
+p1/(p2|p3|p4)
+
+#ggsave("fig-2.3.png",height = 3.7,width = 6.75)
+
+```
+
+### Attempt to do GO enrichment
+
+I don't feel GO enrichment of these genes is a useful idea since the decision of including which genes is a bit arbitrary. A simple table of genes involved should be good enough.
+
+**Table 1:** GO enrichment of genes in selected regions identified by PCAngsd along PC1.
+
+```{r}
+term2gene<-annotation %>% mutate(go=ifelse(is.na(`Gene ontology IDs`),ipr_go,`Gene ontology IDs`)) %>% drop_na(go) %>% select(go,aten_id) %>% 
+  separate_rows(go,sep = ";")
+
+term2name<-get_names(term2gene %>% pull(go) %>% unique ) %>% select(go_id,go_name) %>% na.omit() %>% as_tibble()
+
+#sig_enrich <- enricher(sig_genes %>% pull(aten_id),TERM2GENE = term2gene,qvalueCutoff = 1,pvalueCutoff = 0.05)
+sig_enrich <- enricher(sig_genes %>% pull(aten_id),TERM2GENE = term2gene,TERM2NAME = term2name,qvalueCutoff = 1,pvalueCutoff = 0.05)
+sig_enrich %>% as_tibble()%>% mutate(ID=gsub(pattern = "^ ","",ID),Description=get_names(ID) %>% pull(go_name)) %>% knitr::kable()
+
+```
+
+
+**Table 2:** Putative Loci under Selection on PC1.
+
+```{r}
+sig_genes %>% drop_na(`Gene names`) %>%  group_by(chrom,start,end,lead_snp,top_p,n_snp) %>% mutate(top_p=format(top_p,digits=3)) %>% 
+  summarise(genes=paste(`Gene names`,collapse  = "; ")) %>% mutate(length_mb=(end-start)/1e6) %>% mutate(length_mb=format(length_mb,digits=3)) %>% arrange(desc(length_mb)) %>% 
+  knitr::kable()
+```
+
+### Supplementary Figures
+
+```{r,fig.height=10,fig.width=6.78}
+labels <-sig_genes %>% drop_na(`Gene names`) %>%  select(chrom,start,end) %>% mutate(label=paste(chrom,":",start,"-",end,sep = "")) %>% distinct() %>% pull(label)
+p2_pc1<-p2 + xlab(labels[1])
+p3_pc1<-p3+ xlab(labels[5])
+p4_pc1<-p4 + xlab(labels[7])
+pa_pc1<-pc_plots(la_covmat)[3][[1]] + xlab(labels[6])
+pb_pc1<-pc_plots(lb_covmat)[3][[1]] + xlab(labels[4])
+
+
+p2_pc2<-pc_plots(l1_covmat)[2][[1]] + xlab(labels[1])
+p3_pc2<-pc_plots(l2_covmat)[2][[1]]+ xlab(labels[5])
+p4_pc2<-pc_plots(l3_covmat)[2][[1]] + xlab(labels[7])
+pa_pc2<-pc_plots(la_covmat)[2][[1]] + xlab(labels[6])
+pb_pc2<-pc_plots(lb_covmat)[2][[1]] + xlab(labels[4])
+
+(p2_pc1/pa_pc1/pb_pc1/p3_pc1/p4_pc1)|(p2_pc2/pa_pc2/pb_pc2/p3_pc2/p4_pc2)
+#ggsave("s-fig-pcangsd_pcloading.png",width = 6.98,height = 9.8)
+```
