@@ -1,0 +1,120 @@
+---
+title: "Batch Effect: what is going on here"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.retina = 2)
+library(tidyverse)
+library(ggpubr)
+library(ggbreak)
+library(knitr)
+library(ggrepel)
+library(patchwork)
+source("scripts/my_color.R")
+
+df <- read_csv("data/hpc/qc/summary_data.csv") %>% mutate(pop_order=site_order()[pop],
+                                                          mapping_rate=as.numeric(sub("%", "", mapping_rate)),
+                                                          genome_cov=as.numeric(sub("%", "", genome_cov)))
+
+cbp1 <- c("#E69F00", "#56B4E9", "#009E73",
+          "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+```
+
+Although the all samples were sequenced at about the same time, with the same sequencing technology, same read length, we still obeserved some suspecious batch effects from individual heterozygosity estimates. The source could be actual biology? or the read sequencing coverage difference as we observed in [sequencing info](00.sample_sequencing_info). Altough, they all sequenced at low-coverage about 3-5X, the consistent higher coverages in offshore samples would bring some effects even the difference is minor.
+
+```{r}
+read_ml <- function(filename){
+  sample_id <- basename(filename) %>% str_remove(".ml")
+  temp <- scan(filename)
+  tibble(sample_id=sample_id, het=temp[2]/sum(temp))
+}
+
+heter <- map_df(list.files("data/hpc/summary/heter/",pattern = ".*ml", full.names = T),read_ml) %>% left_join(df) %>% mutate(reef=ifelse(reef=="Outer","Offshore","Inshore"))
+#heter <- map_df(list.files("data/hpc/summary/heter_20/",pattern = ".*ml", full.names = T),read_ml) %>% left_join(df)
+ggplot(heter, aes(x=reorder(pop,pop_order),y=het,color=reorder(pop,pop_order))) + geom_violin() +
+  geom_jitter() + scale_color_manual(values = site_colors(), labels=site_labels()) +
+  theme_bw() + labs(x="",y="Individual heterozygosity",color="")
+
+```
+A simple and quick way to check this is to plot the depth against individual heterozygosities.
+
+```{r}
+ggplot(heter, aes(x=reorder(pop,pop_order),y=het,color=reef)) + geom_violin() +
+  geom_jitter() + #scale_color_manual(values = site_colors(), labels=site_labels()) +
+  theme_bw() + labs(x="",y="Individual heterozygosity",color="")
+
+ggplot(heter %>% filter(sample_id!="MI-1-4_S10",sample_id!="FI-1-3_S9",seq_depth>=2),aes(x=net_mapping_depth,y=het,color=reef)) +
+  geom_point() + geom_smooth()+stat_cor(method="pearson") + labs(y="Individual heterozygosity",x="Coverage",color="")
+```
+
+
+We then want to check the PCA plot again.
+
+```{r}
+covmat <- read_table("data/hpc/inshore_offshore/north_187.pcangsd.cov",col_names = F) %>% as.matrix()
+
+sample_ids <- read_tsv("data/hpc/inshore_offshore/north187_sample_id.txt", col_names = "sample_id",show_col_types = FALSE) %>% pull(sample_id)
+
+colnames(covmat)<- sample_ids
+rownames(covmat) <- sample_ids
+
+
+pop_eigen <- eigen(covmat)
+sample_table <- read_csv("data/hpc/qc/summary_data.csv",show_col_types = FALSE) %>% select(sample_id,pop,location,reef) %>% filter(pop!="MI")
+
+pop_pca12 <- data.frame(x=pop_eigen$vectors[,1],y=pop_eigen$vectors[,2],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+pop_pca13 <- data.frame(x=pop_eigen$vectors[,1],y=pop_eigen$vectors[,3],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+pop_pca23 <- data.frame(x=pop_eigen$vectors[,2],y=pop_eigen$vectors[,3],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+
+pop_pca14 <- data.frame(x=pop_eigen$vectors[,1],y=pop_eigen$vectors[,4],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+pop_pca24 <- data.frame(x=pop_eigen$vectors[,2],y=pop_eigen$vectors[,4],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+pop_pca34 <- data.frame(x=pop_eigen$vectors[,3],y=pop_eigen$vectors[,4],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+
+pc1 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[1]
+pc2 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[2]
+pc3 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[3]
+pc4 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[4]
+
+
+my_legend<-get_legend(ggplot(pop_pca12, aes(x=x,y=y,color=reef)) + geom_point()+ 
+  scale_color_manual(values = cbp1, labels=c("Inshore","Offshore"))+ theme_test() + labs(color=""))
+
+p12<-ggplot(pop_pca12, aes(x=x,y=y)) + geom_point(aes(color=reef),size=2,alpha=.8)+ 
+  scale_color_manual(values = cbp1,guide="none") +
+  theme_test() + labs(x=paste0("PC1 (",pc1,"%)"),y=paste0("PC2 (",pc2,"%)"), color="Reef")
+
+p23<-ggplot(pop_pca23, aes(x=x,y=y)) + geom_point(aes(color=reef),size=2,alpha=.8)+ 
+  scale_color_manual(values = cbp1,guide="none") +
+  theme_test() + labs(x=paste0("PC2 (",pc2,"%)"),y=paste0("PC3 (",pc3,"%)"), color="Reef")
+
+p13<-ggplot(pop_pca13, aes(x=x,y=y)) + geom_point(aes(color=reef),size=2,alpha=.8)+ 
+  scale_color_manual(values = cbp1,guide="none") +
+  theme_test() + labs(x=paste0("PC1 (",pc1,"%)"),y=paste0("PC3 (",pc3,"%)"), color="Reef")
+
+p14<-ggplot(pop_pca14, aes(x=x,y=y)) + geom_point(aes(color=reef),size=2,alpha=.8)+ 
+  scale_color_manual(values = cbp1,guide="none") +
+  theme_test() + labs(x=paste0("PC1 (",pc1,"%)"),y=paste0("PC4 (",pc4,"%)"), color="Reef")
+
+p24<-ggplot(pop_pca24, aes(x=x,y=y)) + geom_point(aes(color=reef),size=2,alpha=.8)+ 
+  scale_color_manual(values = cbp1,guide="none") +
+  theme_test() + labs(x=paste0("PC2 (",pc2,"%)"),y=paste0("PC4 (",pc4,"%)"), color="Reef")
+
+p34<-ggplot(pop_pca34, aes(x=x,y=y)) + geom_point(aes(color=reef),size=2,alpha=.8)+ 
+  scale_color_manual(values = cbp1,guide="none") +
+  theme_test() + labs(x=paste0("PC3 (",pc3,"%)"),y=paste0("PC4 (",pc4,"%)"), color="Reef")
+
+
+layout <- '
+A#P
+BC#
+DEF
+'
+
+wrap_plots(A = p12, B = p13, C = p23, D=p14,E=p24,F=p34, P=as_ggplot(my_legend),design = layout)
+#ggsave("pca-batch-effect.png",width = 6.4,height = 6)
+
+```
+
+
+
