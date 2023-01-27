@@ -1,0 +1,155 @@
+---
+title: "The heterozygosity within islands of differentiation"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.retina = 2)
+library(tidyverse)
+library(ggpubr)
+library(patchwork)
+source("scripts/my_color.R")
+cbp1 <- c("#E69F00", "#56B4E9", "#009E73",
+          "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+```
+
+Our genome-wide scan based on PCA revealed local regions significantly structuring the populations within samples from the north reefs (except Magnetic Island). [here](09.pcangsd_selection.md). The PCA plots of these regions quantatively display three clusters. Here, we examined the individual heterozygosity of samples in each cluster.
+
+Locus used in analysis:
+
+- Sc0000185:41650-310310 (L2)
+- Sc0000135:526260-880608 (L3)
+- Sc0000214:345-241,228 (L4)
+
+Angsd was used again to estimate saf and calculate the number of heterozygosity sites within regions.
+
+```{r prepare}
+sample_ids <- read_tsv("data/hpc/inshore_offshore/north187_sample_id.txt", col_names = "sample_id",show_col_types = FALSE) %>% pull(sample_id)
+sample_table <- read_csv("data/hpc/qc/summary_data.csv",show_col_types = FALSE) %>% select(sample_id,pop,location,reef) %>% mutate(reef=ifelse(reef=="Outer","Offshore","Inshore"))
+
+pc_plots <- function(covmat,flip=FALSE) {
+  colnames(covmat)<- sample_ids
+  rownames(covmat) <- sample_ids
+  pop_eigen <- eigen(covmat)
+  pc1_loading <- data.frame(pc1=pop_eigen$vectors[,1],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+  pc2_loading <- data.frame(pc1=pop_eigen$vectors[,2],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+  pop_pca12 <- data.frame(x=pop_eigen$vectors[,1],y=pop_eigen$vectors[,2],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+  pop_pca23 <- data.frame(x=pop_eigen$vectors[,2],y=pop_eigen$vectors[,3],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+  pc1 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[1]
+  pc2 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[2]
+  pc3 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[3]
+  
+  if (flip){pop_pca12<-pop_pca12 %>% mutate(x=-x)}
+  pca_plot<-ggplot(pop_pca12, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order)),size=2)+ 
+  scale_color_manual(values = site_colors(), labels=site_labels()) + 
+  theme_test(base_size = 12) + labs(x=paste0("PC1 (",pc1,"%)"),y=paste0("PC2 (",pc2,"%)")) + theme(legend.position = "top",legend.title = element_blank())
+  #+ theme(legend.position = "none")
+
+
+  #pc1 loading in populations
+  pc1_pop_plot<-ggplot(pc1_loading, aes(x=reorder(pop,pop_order),y=pc1,color=reorder(pop,pop_order))) + #geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
+    geom_jitter(size=2,alpha=.8,width = 0.15)+
+    #geom_point()+
+    scale_color_manual(values = site_colors(),guide="none") + 
+    theme_pubr(base_size = 12) + labs(y=paste0("PC1 (",pc1,"%)"),x="", shape="", color="")
+
+  #pc1 loading in reefs
+  pc1_reef_plot<-ggplot(pc1_loading, aes(x=reef,y=pc1,color=reef)) + #geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+ 
+    geom_jitter(size=2,alpha=.8,width = 0.1)+scale_color_manual(values = cbp1,guide="none") +
+    #geom_point()+
+    #scale_color_manual(values = site_colors(), labels=site_labels()) + 
+    theme_pubr(base_size = 12) + labs(y=paste0("PC1 (",pc1,"%)"),x="", shape="", color="")
+  
+  results<-list(pca_plot,pc1_pop_plot,pc1_reef_plot,pc1_loading)
+  names(results) <-c("pca_plot","pc1_plot","pc1_plot2","pc1_df")
+  return(results)
+}
+
+read_ml <- function(filename){
+  sample_id <- basename(filename) %>% str_remove(".ml")
+  temp <- scan(filename)
+  tibble(sample_id=sample_id, het=temp[2]/sum(temp))
+}
+```
+
+
+**L2:Sc0000185:41,650-310,310**
+
+```{r sc185-het,,fig.height=4}
+l_sc185_chr2a <- read_table("data/hpc/inshore_offshore/pcangsd_sig005/Sc0000185_chr2a_RagTag.pcangsd.cov",col_names = F) %>% as.matrix()
+
+p1<-pc_plots(l_sc185_chr2a,flip = TRUE)["pca_plot"]$pca_plot 
+p_legend <- p1 %>% get_legend %>% as_ggplot 
+p1<-p1+ ggtitle("L2")+
+  theme(legend.position = "none",plot.title=element_text(vjust = - 10,hjust = 0.95))
+
+pc_df<-pc_plots(l_sc185_chr2a)["pc1_df"][[1]] %>%  mutate(cluster=case_when(pc1>0~"Cluster 1",between(pc1,-0.15,0)~"Cluster 2", pc1< -0.15~"Cluster 3")) %>% select(sample_id,pop,reef,cluster,pc1)
+
+#pc_df %>% ggplot(aes(x=pc1,y=cluster)) + geom_point()
+
+heter_l_sc185 <- map_df(list.files("data/hpc/inshore_offshore/het_locus/Sc0000185",pattern = ".*ml", full.names = T),read_ml) %>% mutate(sample_id=gsub(".Sc0000185","",sample_id))
+
+p2<-heter_l_sc185 %>% left_join(pc_df) %>% 
+  ggplot(aes(x=cluster,y=het)) + 
+  geom_boxplot(width=0.5)+ theme_bw(base_size = 12) + 
+  geom_jitter(width = 0.2,alpha=0.6)+
+  labs(x="",y="Heterozygosity")
+
+A<-p1+p2+plot_layout(widths = c(0.65,0.35))
+A
+```
+
+**L3:Sc0000135:526,260-880,608**
+
+```{r sc0000135-het,fig.height=4}
+l_sc135_chr11 <- read_table("data/hpc/inshore_offshore/pcangsd_sig005/Sc0000135_chr11_RagTag.pcangsd.cov",col_names = F) %>% as.matrix()
+
+p1<-pc_plots(l_sc135_chr11)["pca_plot"]$pca_plot
+p1<-p1+ ggtitle("L3")+theme(legend.position = "none",plot.title=element_text(vjust = - 10,hjust = 0.95))
+
+pc_df<-pc_plots(l_sc135_chr11)["pc1_df"][[1]] %>%  mutate(cluster=case_when(pc1< 0~"Cluster 1",between(pc1,0,0.2)~"Cluster 2", pc1>0.2~"Cluster 3")) %>% select(sample_id,pop,reef,cluster,pc1)
+
+#pc_df %>% ggplot(aes(x=pc1,y=cluster)) + geom_point()
+
+heter_l_sc135 <- map_df(list.files("data/hpc/inshore_offshore/het_locus/Sc0000135",pattern = ".*ml", full.names = T),read_ml) %>% mutate(sample_id=gsub(".Sc0000135","",sample_id))
+
+p2<-heter_l_sc135 %>% left_join(pc_df) %>% 
+  ggplot(aes(x=cluster,y=het)) + 
+  geom_boxplot(width=0.5)+ theme_bw(base_size = 12) + 
+  geom_jitter(width = 0.2,alpha=0.6)+
+  labs(x="",y="Heterozygosity")
+
+B<-p1+p2+plot_layout(widths = c(0.65,0.35))
+B
+
+```
+
+**L4:Sc0000214:345-241,228**
+
+```{r sc0000214-het,,fig.height=4}
+l_sc214 <- read_table("data/hpc/inshore_offshore/pcangsd_sig005/Sc0000214_Sc0000151_RagTag.pcangsd.cov",col_names = F) %>% as.matrix()
+
+p1<-pc_plots(l_sc214)["pca_plot"]$pca_plot
+p1<-p1+ ggtitle("L4")+theme(legend.position = "none",plot.title=element_text(vjust = - 10,hjust = 0.95))
+pc_df<-pc_plots(l_sc214)["pc1_df"][[1]] %>%  mutate(cluster=case_when(pc1< -0.05~"Cluster 1",between(pc1,-0.05,0.15)~"Cluster 2", pc1> 0.15 ~"Cluster 3")) %>% select(sample_id,pop,reef,cluster,pc1)
+
+#pc_df %>% ggplot(aes(x=pc1,y=cluster)) + geom_point()
+
+heter_l_sc214 <- map_df(list.files("data/hpc/inshore_offshore/het_locus/Sc0000214",pattern = ".*ml", full.names = T),read_ml) %>% mutate(sample_id=gsub(".Sc0000214","",sample_id))
+
+p2<-heter_l_sc214 %>% left_join(pc_df) %>% 
+  ggplot(aes(x=cluster,y=het)) + 
+  geom_boxplot(width=0.5)+ theme_bw(base_size = 12) + 
+  geom_jitter(width = 0.2,alpha=0.6)+
+  labs(x="",y="Heterozygosity")
+
+C<-p1+p2+plot_layout(widths = c(0.65,0.35))
+C
+```
+```{r include=FALSE, fig.height=10.75,fig.width=6.75}
+A/B/C
+#ggsave("fig-2.5.png",width = 6.75,height = 10.75)
+#ggsave("fig-2.5_legend.png",p_legend)
+```
+
+
