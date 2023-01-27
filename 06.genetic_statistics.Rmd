@@ -46,6 +46,7 @@ stat_df <- map_df(list.files("data/hpc/summary/thetaStat/",pattern = "*.pestPG",
 
 #stat_df %>% ggplot(aes(y=tW,x=covered)) + geom_point(size=.2)+facet_wrap(~pop,scale="free") + geom_vline(xintercept = 0.05)+theme_bw()
 
+stat_df%>% filter(covered>0.1,pop!="north") %>% group_by(pop) %>% summarise(mean_tw=mean(tW),mean_tp=mean(tP),mean_tj=mean(Tajima))
 
 ggplot(stat_df %>% filter(covered>0.1),aes(x=reorder(pop,pop_order),y=Tajima,color=reorder(pop,pop_order))) + geom_boxplot() + scale_color_manual(values = site_colors()) +
 labs(x="",y="Tajima's D",color="") + theme_pubclean() + coord_flip()
