@@ -1,4 +1,4 @@
-## Population genomics of *Acropora tenius* on the Great Barrier Reef
+## Population genomics of *Acropora kenti* on the Great Barrier Reef
 
 Analysis and code including in this project
 
