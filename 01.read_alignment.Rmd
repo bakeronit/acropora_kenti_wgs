@@ -1,6 +1,7 @@
 ---
 title: "Read alignment"
 output: github_document
+bibliography: bibliography.bib  
 ---
 
 ```{r setup, include=FALSE}
@@ -10,7 +11,11 @@ library(ggpubr)
 source("scripts/my_color.R")
 ```
 
-We used `bwa` to map short reads from samples to *Acropora tenius* genome assembly [version v0.11](http://aten.reefgenomics.org/download/).
+### Choice of genome reference
+
+For all mapping and alignment tasks in this paper we used the *Acropora kenti* genome assembly [version v0.11](http://aten.reefgenomics.org/download/).  This assembly was originally labelled *Acropora tenuis* but the taxonomy of this group has since been revised by @{Bridge2023-mi}.  As part of this revision *Acropora tenuis* from the Great Barrier Reef has been renamed to *Acropora kenti* and is more closely related to *Acropora echinata* than to *Acropora tenuis* from Japan and Western Australia. Our genome assembly corresponds to a specimen from Orpheus Island (GBR) and is therefore *Acropora kenti*.
+
+Initial steps for read mapping follow the GATK germline best practices guidelines.  This ensures proper marking of adapters, duplicate removal and addition of read group tags in the resulting bam files.
 
 ### 0. Index genome
 
@@ -37,33 +42,50 @@ sambamba view -f bam -s 0.13 -t 10 --subsampling-seed=36 FI-1-3_S9_aligned_dupli
 sambamba view -f bam -s 0.12 -t 10 --subsampling-seed=36 MI-1-4_S10_aligned_duplicates_marked_sorted.bam -o MI-1-4_subsampled_aligned_duplicates_marked_sorted.bam
 ```
 
-### 3. Mapping results
+### 3. Summary of Mapping results
 
-For all samples, the average mapping rate is 93.12%(84.47%-97.86%), average genome coverage is 74.30% (38.82%-86.30%), the net mapping rate is 3.39X (1.77X-5.30X).
+Mapping coverage and depth were summarised using the `samtools depth` command
+
+```bash
+samtools depth -a $bamfile |awk '{sum+=$3;if($3>0) {n++}}END{print "coverge:",n/NR,";mapping depth:"sum/NR,";net mapping depth:",sum/n}' 
+```
+
+Across all samples, the average mapping rate is 93.12% (84.47%-97.86%), average genome coverage is 74.30% (38.82%-86.30%), the coverage depth is 3.39X (1.77X-5.30X).
 
 ```{r mapping}
-df <- read_csv("data/hpc/qc/summary_data.csv") %>% mutate(pop_order=site_order()[pop],
-                                                          mapping_rate=as.numeric(sub("%", "", mapping_rate)),
-                                                          genome_cov=as.numeric(sub("%", "", genome_cov)))
+excl <- read_tsv("data/qc/excluded_samples.txt",col_names = "id")
 
-df2 <- df %>% select(sample_id,pop, mapping_rate,genome_cov,net_mapping_depth,pop_order) %>% pivot_longer(-c(sample_id,pop,pop_order),names_to = "stats") %>%
+df <- read_csv("data/summary_data.csv") %>% 
+  mutate(pop_order=site_order()[pop],
+         mapping_rate=as.numeric(sub("%", "", mapping_rate)),
+         genome_cov=as.numeric(sub("%", "", genome_cov)))
+
+df2 <- df %>% select(sample_id,pop, mapping_rate,genome_cov,net_mapping_depth,pop_order) %>% 
+  pivot_longer(-c(sample_id,pop,pop_order),names_to = "stats") %>%
   mutate(stats=factor(stats,levels = c("mapping_rate","genome_cov","net_mapping_depth")))
 
 stat.labs <- c("Mapping rate (%)", "Genome coverage (%)", "Mapping depth (X)")
 names(stat.labs) <- c("mapping_rate", "genome_cov", "net_mapping_depth")
 
-df2 %>% ggplot(aes(x=reorder(pop,pop_order),y=value,color=pop)) + 
+df_excl <- df2 %>% 
+  filter(sample_id %in% excl$id)
+
+df2 %>% 
+  filter(!(sample_id %in% excl$id)) %>% 
+  ggplot(aes(x=reorder(pop,pop_order),y=value,color=pop)) + 
   geom_boxplot() +
   geom_point() +
+  geom_point(data=df_excl,color="grey") +  
   scale_color_manual(values = site_colors(),guide=F) +
-  theme_pubclean()+ coord_flip() + facet_wrap(~stats, scales = "free_x",labeller = labeller(stats = stat.labs))+ labs(y="",x="")
+  theme_pubclean() + 
+  coord_flip() + 
+  facet_wrap(~stats, scales = "free_x",labeller = labeller(stats = stat.labs))+ labs(y="",x="")
+
+ggsave("figures/Figure_S1.png",width = 8,height = 6)
 ```
 
-**Here, the mapping depths were calculated based on the genome region with reads covered instead of average mapping depth across the genome. This is useful when making decision in filtering step.**
+**Figure S1: Summary of read mapping statistics for all samples**. Mapping rate refers to the proportion of all reads that could be successfully mapped to the *A. kenti* genome. Genome coverage is the proportion of the *A. kenti* genome covered by at least one read (mappable regions) and Mapping depth is the average depth of coverage within mappable regions. Samples excluded from further analyses are shown in grey. 
 
-We noticed that although samples from outer reefs got more sequencing data as in [sequencing data summary](00.sample_sequencing_info.md), they tend to have lower mapping rates. Does this mean samples from outer reefs contain more reads from their symbiosis algae?
-
-With more reads, samples from outer reefs have higher genome coverage, which means they had sequenced more genome. With the exception that samples from Arlington reefs had a big variance, and because of that, the ARL samples had highest mapping depths since some samples only covered half of the genome.
 
 
 
