@@ -1,0 +1,76 @@
+---
+title: "Investigating potential batch effects"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.retina = 2)
+library(tidyverse)
+library(ggpubr)
+source("functions.R")
+
+```
+
+All samples in this study were sequenced with the same sequencing technology, same read length and at approximately the same overall depth. In addition, as shown in analyses of [population structure](04.population_structure.md) no difference between inshore and offshore samples was observed in PCA or in a tree based on IBS distances.  Nevertheless we did observe some consistent differences between inshore and offshore samples that might indicate a subtle batch effect. 
+
+The first of these differences was in individual heterozygosity estimates. To calculate individual heterozygosities we first ran `angsd` for each sample individually. Running `realSFS` on these individual allele frequency files provides an estimate of the number of heterozygous sites (AF=0.5) and we can obtain the heterozygosity by dividing this by the total number of sites. To a first approximation the total number of sites is simply equal to the number of sites with AF=0. 
+
+```bash
+for sample in samples;do
+angsd -i $i -ref ${ref} -anc ${ref} -C 50 \
+    -GL 2 -doSaf 1 \
+    -sites ../reference_mappability_K50_E2.unique_mdust1M_depth.bed \
+    -doCounts 1 \
+    -setMinDepth 2 -setMaxDepth 12\
+    -minQ 30 -minMapQ 30 -nThreads 15 -uniqueOnly 1 -doMajorMinor 1  -out $sample
+
+    ../../angsd/misc/realSFS -fold 1 -P 15 ${sample}.saf.idx > ${sample}.ml 
+done
+```
+
+```bash
+for f in *.ml;do s=${f%.ml}; h=$(awk '{print $2/$1}' $f); printf "%s\t%s\n" $s $h;done > hets.tsv
+```
+
+We performed this individual heterozygosity calculation for our standard dataset as well as for data with coverage downsampled to 2x so that all samples have the same overall depth. 
+
+```{r}
+hets <- read_tsv("data/3.summary_ic/het_allsites/all_hets.tsv",col_names = c("sample","het"),show_col_types = F) %>% 
+  sample2reef() %>% 
+  reef2pop()
+
+hets_ds <- read_tsv("data/3.summary_ic/het_downsample/all_hets.tsv",col_names = c("sample","het"),show_col_types = F) %>%   
+  sample2reef() %>% 
+  reef2pop() %>% 
+  dplyr::rename(het_2x=het)
+
+hets_gs <- read_tsv("data/3.summary_ic/het_goodwindows/goodwindows_hets.tsv",col_names = c("sample","het"),show_col_types = F) %>%   
+  sample2reef() %>% 
+  reef2pop() %>% 
+  dplyr::rename(het_gs=het)
+
+hetcov_data <- read_tsv("data/3.summary_ic/coverage.tsv",col_names = c("sample","cov"), show_col_types = F) %>% 
+  left_join(hets) %>% 
+  add_reef_order() %>% 
+  left_join(hets_ds) %>% 
+  left_join(hets_gs) %>% 
+  pivot_longer(cols=c("het","het_2x","het_gs"),names_to = "dataset",values_to = "het")
+```
+
+
+```{r}
+het.labs <- c("Full Data", "Downsampled to 2x")
+names(het.labs) <- c("het", "het_2x")
+
+hetcov_data %>% 
+  filter(dataset!="het_gs") %>% 
+  ggplot(aes(x=reorder(reef,reef_order),y=het)) + 
+  geom_boxplot(aes(color=reorder(reef,reef_order)),outlier.shape = NA) + 
+  geom_jitter(width = 0.3,size=0.5,aes(color=reorder(reef,reef_order))) + 
+  scale_color_manual(values = site_colors(), labels=site_labels()) +
+  facet_wrap(~dataset,ncol = 1,labeller = labeller(dataset = het.labs)) + 
+  theme_pubr() + ylab("Heterozygosity %") + xlab("") + theme(legend.title = element_blank())
+ggsave("figures/Figure_S7.png",width = 8,height = 6)
+```
+
+

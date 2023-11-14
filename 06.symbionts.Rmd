@@ -1,0 +1,264 @@
+---
+title: "Symbiont Profiles"
+output: github_document
+bibliography: bibliography.bib
+---
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8,
+                      echo=FALSE, warning=FALSE, message=FALSE)
+library(tidyverse)
+require(ComplexHeatmap)
+require(ggpubr)
+library(RColorBrewer)
+library(ggsci)
+library(ggrepel)
+library(ggpubr)
+source("functions.R")
+
+```
+
+## Genus level analysis using Kraken
+The relative abundance of major clades (genera) of Symbiodiniaceae was profiled using [moqc](https://github.com/marine-omics/moqc)
+
+```{r}
+group_order <- c("Symbiodinium"=1,"Breviolum"=2,"Cladocopium"=3,"Durusdinium"=4,"Fugacium"=5, 'Host'=8)
+
+sample_data <- read_sample_table()
+
+if(!file.exists("data/symbiont_kraken.rds")){
+  genome_mpa31_files <- list.files("hpc/moqc/out/krakenuniq/",pattern = "*.mpa",full.names = TRUE)
+
+  read_mpa <- function(path){
+    s <- basename(path) %>% str_extract("[^\\.]+")
+    sample_group <- s %>% str_extract("[^\\-]+")
+    mpa_data <- read_tsv(path,col_names = c("taxonomy","read_count"),col_types = cols()) %>% 
+      add_column(sample=s) 
+  }
+
+  genome_mpa31_data <- do.call(rbind,lapply(genome_mpa31_files,read_mpa)) %>% add_column(kmer="g31")
+
+  mpa_data <- genome_mpa31_data 
+  
+
+  symbiodinium_data <- mpa_data %>% 
+    left_join(sample_data,by=c("sample"="sample_id")) %>% 
+    filter(grepl(pattern = "f__Symbiodiniaceae",taxonomy) | 
+             grepl( pattern = "tenuis", taxonomy)) %>% 
+    mutate(clade = str_match(taxonomy,pattern = "f__Symbiodiniaceae\\|g__([A-z]+)")[,2]) %>% 
+    mutate(clade = ifelse(grepl(pattern="Acropora_tenuis",taxonomy),"Host",clade)) %>% 
+    na.omit() %>% 
+    mutate(clade_order=group_order[clade]) %>% 
+    filter(clade!="Host") 
+  
+    write_rds(symbiodinium_data,"data/symbiont_kraken.rds")
+} else {
+  symbiodinium_data <- read_rds("data/symbiont_kraken.rds")
+}
+```
+
+
+
+```{r}
+# Plot by absolute read counts
+# 
+
+
+symb_plot_data <- symbiodinium_data %>% 
+  ungroup() %>% 
+  group_by(sample) %>% 
+  dplyr::mutate(sample_total = sum(read_count))
+  
+spg_plot <- symb_plot_data %>% 
+  ggplot(aes(x=clade,y=read_count/1e6)) + 
+  geom_boxplot(aes(color=clade), outlier.size = 0.5) + 
+  facet_wrap(~reorder(reef,reef_order),nrow = 1)  + theme_pubclean(base_size = 10) +
+  ylab("Read Count (Millions)") + xlab("") +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+        legend.position = "none", legend.title = element_blank())
+
+# Plot by read count proportions
+spg_plot_props <- symb_plot_data %>% 
+  group_by(clade,sample) %>% 
+  dplyr::mutate(proportion = sum(read_count)/sample_total) %>% 
+  ggplot(aes(x=clade,y=proportion)) + 
+  geom_point(aes(color=clade), position = position_jitterdodge(jitter.height = 0.01, jitter.width = 0.8), size=0.5) +
+  facet_wrap(~reorder(reef,reef_order),nrow = 1) + theme_pubclean(base_size = 10) +
+    xlab("") + ylab("Read Proportion") + ylim(0,1) +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+        legend.position = "bottom", legend.title = element_blank())
+```
+
+Irrespective of whether absolute read counts or proportion of reads is used the dominant symbiont clade for almost all samples was *Cladocopium*. Two samples from Arlington Reef and two from Dunk Island were dominated by *Durusdinium*.
+
+```{r}
+# Combine plots 
+library(cowplot)
+plot_grid(spg_plot,spg_plot_props, ncol = 1, align = "hv", axis = "lr", rel_heights = c(0.4,0.6))
+ggsave("figures/Figure_S8.png",width = 6.2,height = 4.6)
+```
+
+**Figure 1:** Genus level profiles of Symbiodiniaceae present in whole genome sequencing data of *A. kenti* .  Read counts represent numbers of reads classified by kraken as belonging to the given genus.  Read proportions are relative to reads assigned to the family Symbiodiniaceae only. 
+
+
+# Diversity within the dominant genus, *Cladocopium*
+
+While the kraken analysis clearly showed that most *A. kenti* samples are dominated by *Cladocopium*, this is a large and diverse genus.  We therefore undertook additional analyses to search for patterns of symbiont diversity at lower taxonomic levels. 
+
+
+## Symbiont mitogenome haplotypes
+
+Firstly, reads were extracted from duplicate marked bam files and mapped to the *Cladocopium* (C1) genome. The symbiont mitogenome sequence was downloaded from [reefgenomics](http://symbs.reefgenomics.org/download/) and mapping was performed on all deduplicated reads (including host). 
+
+```bash
+samtools fastq -F 1024 {sample}_dpmarked.bam | bam mem -t 12 <mitogenome> - | \
+samtools view -b -F 4 > {sample}_mito.bam
+```
+
+We then used ANGSD `haplocall` to call haploid consensus sequences from each bam file.  Settings were chosen to obtain the consensus base at each position (`dohaplocall 2`), only print positions where at least one variant allele was found (`minMinor 1`) and exclude any positions where more than 10 individuals have an ambiguous base (`maxMis 10`).
+
+```bash
+../angsd/angsd -bam ind212_symbc_bam.list \
+	-dohaplocall 2 -doCounts 1 -minMinor 1 -maxMis 10 \
+	-minMapQ 20 -minQ 20 -uniqueOnly 1 \
+	-nThreads 8 
+```
+
+This resulted in an alignment with 145 variable sites.  Further cleaning with `goalign` removed 29 sequences with more than 4% ambiguous bases.
+
+```bash
+cat AllHaps.fasta | \
+	sed 's/_downsampled_3X//' |\
+  goalign clean seqs --char=N -c 0.04 | goalign clean sites --char=N -c 0.04 > AllHapsClean.fasta
+```
+
+We then converted this to nexus file, encoding the reef as a trait.  To do this we first generated a traits file in R and then ran a custom [python script](scripts/fasta2nexus.py) to generate nexus format
+
+```bash
+fasta2nexus.py AllHapsClean.fasta -t traits_reef.txt > AllHapsClean.nex
+```
+
+```{r, exec = FALSE}
+symb_traits_samples <- read_lines("data/symbiomito/traits.txt")
+
+symb_traits <- data.frame(sample_id = symb_traits_samples) %>% 
+  left_join(sample_data)
+
+order2vec <- function(o,m){
+  v <- rep(0,m)
+  v[o] <- 1
+  paste(as.character(v),collapse=",")
+}
+
+header <- symb_traits %>% 
+  group_by(reef,reef_order) %>% 
+  summarise() %>% 
+  arrange(reef_order) %>% 
+  pull(reef) %>% 
+  paste(collapse=",")
+
+sym_traits_reef <- symb_traits %>% 
+  select(sample_id,reef_order) %>% 
+  rowwise() %>% 
+  mutate(reef_trait = order2vec(reef_order,9)) %>% 
+  select(sample_id,reef_trait)
+
+# Don't overwite because this needs a little manual cleanup of the header to get right
+#sym_traits_reef %>% write_csv(file="symbiomito/traits_reef.txt",quote = "none")
+```
+
+The alignments in Nexus-format were loaded in [popart](http://popart.otago.ac.nz/index.shtml) to generate haplotype networks using minimum spanning method.
+
+```{r}
+knitr::include_graphics("data/symbiomito/AllHapsCleanShortNames_PopArt.png")
+```
+
+**Figure 2:** Haplotype network of Cladocopium mitochondrial sequences in 183 coral samples
+
+To more easily classify samples according to their dominant symbiont we built a tree with `iqtree`
+
+```bash
+iqtree -s AllHapsClean.fasta -m TEST -bb 1000
+```
+
+```{r}
+library(ggtree)
+library(ape)
+library(phangorn)
+
+symb_tree <- read.tree("data/symbiomito/AllHapsClean.fasta.contree")
+
+symb_tree_r <- midpoint(symb_tree)
+
+c2_mrca <- MRCA(symb_tree_r,"JB_13_S11","PI-2-14_S19")
+c2_long_branch1 <- MRCA(symb_tree_r,"PR-1-26_S10","DI-2-7_S42")
+c2_long_branch2 <- MRCA(symb_tree_r,"PR-1-22_S15","PR-2-7_S13")
+
+c2_samples <- extract.clade(symb_tree_r,c2_mrca)$tip.label %>% 
+  setdiff(extract.clade(symb_tree_r,c2_long_branch1)$tip.label) %>% 
+  setdiff(extract.clade(symb_tree_r,c2_long_branch2)$tip.label) %>% 
+  setdiff(c("TAY_17_S34"))
+
+c1_mrca <- MRCA(symb_tree_r,"DI-2-19_S16","DI-2-1_S11")
+c1_samples <- extract.clade(symb_tree_r,c1_mrca)$tip.label %>% 
+  setdiff(c("PR-1-19_S23"))
+
+sample_data_symb <- sample_data %>% 
+  mutate(symbiont = case_when(
+    sample_id %in% c1_samples ~ "C1",
+    sample_id %in% c2_samples ~ "C2",
+    .default = "Uncertain"
+  ))
+
+# Save this classification to a tsv file
+sample_data_symb %>% 
+  select(sample_id,symbiont) %>% 
+  write_tsv(file = "data/symbiomito/haplogroups.tsv")
+
+ggtree(symb_tree_r) %<+% sample_data_symb +
+  geom_tippoint(aes(color=symbiont)) + geom_tiplab(size=2) + theme(legend.title = element_blank())
+
+ggsave(filename = "figures/Figure_S9.png",width = 8,height = 14)
+```
+
+
+This allows us to extract representatives of the two major haplogroups which we label `C1` and `C2` after @Abrego2009-nn . Since it is also possible that other divergent clades might be present we focus only on those samples where the dominant clade can be clearly identified as belonging to one of these haplogroups.  Individual samples with long branches and members of divergent clades are therefore excluded.
+
+## Distance based on D2S statistics
+To further make use of symbiont reads in our data, we applied the `mod2s` pipeline to calculate a d2s matrix
+
+```bash
+nextflow run marine-omics/mod2s -profile genomics -r main --samples symb.csv --outdir symb_d2s --n_reads 100000
+```
+
+Based on this matrix, we made MDS plot below.  This recapitulates the major groupings see in the mitohaplotype network analysis but also shows an inshore/offshore split that may or may-not be due to a batch effect.
+
+```{r}
+d2sm <- read_tsv("data/d2ssect/matrix.tsv", col_names = F) %>% column_to_rownames("X1") %>% as.matrix() 
+colnames(d2sm) <- rownames(d2sm)
+
+mds_d2sm <- d2sm %>% 
+  cmdscale() %>%
+  as.data.frame %>% 
+  rownames_to_column("id") %>% 
+  tidyr::extract(id,into = "sample_id",regex = "(.*)_sub") %>% 
+  left_join(sample_data_symb) %>% 
+  mutate(pop = case_when(
+    reef=="MI" ~ "Magnetic Island",
+    .default = pop
+  ))
+         
+p1 <- mds_d2sm %>% 
+  ggplot(aes(x=V1,y=V2)) + 
+  geom_point(aes(color=symbiont)) + 
+  theme_pubclean()
+
+p2 <- mds_d2sm %>% 
+  ggplot(aes(x=V1,y=V2)) + 
+  geom_point(aes(color=pop)) + 
+  theme_pubclean()
+
+plot_grid(p1,p2,ncol = 1)
+```
+
+
