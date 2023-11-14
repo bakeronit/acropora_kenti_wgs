@@ -11,7 +11,7 @@ library(ggbreak)
 library(knitr)
 source("scripts/my_color.R")
 
-df <- read_csv("data/hpc/qc/summary_data.csv") %>% mutate(pop_order=site_order()[pop],
+df <- read_csv("data/summary_data.csv") %>% mutate(pop_order=site_order()[pop],
                                                           mapping_rate=as.numeric(sub("%", "", mapping_rate)),
                                                           genome_cov=as.numeric(sub("%", "", genome_cov)))
 ```

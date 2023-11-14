@@ -10,28 +10,31 @@ library(ggpubr)
 library(ggtree)
 library(phytools)
 library(ggrepel)
+library(patchwork)
 source("scripts/my_color.R")
 ```
 
 
 ### PCAngsd analysis
 
-We firstly used pcangsd to calculate covariance of all SNPs and plotted the first two principles. The strongest variance was observed between samples from MI and all the other north reefs. The samples from north reefs seems form a big cluster without any clustering pattern with only internal genetic diversity reflected along PC2. We also identified 4 potential hybrids, consistently in PCA plot and Admixture plot. These hybrids were excluded in selection analysis, IBS tree, and demographic modelling.
+We used PCAngsd to calculate the covariance matrix across all SNPs and then used the eigen function in R to complete a PCA. In a plot of PC1 vs PV2 the strongest variance was observed between samples from MI and all the other north reefs. The samples from all non-Magnetic Island reefs form a big cluster without any clustering pattern with only internal genetic diversity reflected along PC2. Admixture coeffients indicated the presence of 4 potential hybrids, whose position in the PCA was between the two clusters. 
 
 ```bash
 pcangsd --beagle atenuis.beagle.gz --threads 48 --admix --admix_auto 10000 --out atenuis.pcangsd
 ```
 
 ```{r, fig.width=9.2, fig.height=3.8}
-covmat <- read_table("data/hpc/pca/atenius.ind212.unique_mdust1M.pcangsd.cov",col_names = F) %>% as.matrix()
+covmat <- read_table("data/04.population_structure/atenius.ind212.unique_mdust1M.pcangsd.cov",col_names = F) %>% as.matrix()
 
-sample_ids <- read_tsv("data/hpc/pca/ind212.txt", col_names = "sample_id",show_col_types = FALSE) %>% pull(sample_id)
+sample_ids <- read_tsv("data/qc/ind212.txt", col_names = "sample_id",show_col_types = FALSE) %>% pull(sample_id)
 
 colnames(covmat)<- sample_ids
 rownames(covmat) <- sample_ids
 
 pop_eigen <- eigen(covmat)
-sample_table <- read_csv("data/hpc/qc/summary_data.csv",show_col_types = FALSE) %>% select(sample_id,pop,location,reef) %>% mutate(reef=ifelse(reef=="Outer","Offshore","Inshore"))
+sample_table <- read_csv("data/summary_data.csv",show_col_types = FALSE) %>% 
+  select(sample_id,pop,location,reef) %>% 
+  mutate(reef=ifelse(reef=="Outer","Offshore","Inshore"))
 
 pop_pca12 <- data.frame(x=pop_eigen$vectors[,1],y=pop_eigen$vectors[,2],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
 pop_pca23 <- data.frame(x=pop_eigen$vectors[,2],y=pop_eigen$vectors[,3],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
@@ -51,15 +54,16 @@ p2<-ggplot(pop_pca23, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order
 
 cowplot::plot_grid(p1,p2,rel_widths = c(0.42,0.58), labels = c("a)","b)"),label_size = 12)
 
-#ggsave("s-fig-pca.png",width = 9.2,height = 3.8)
+ggsave("figures/s-fig-pca.png",width = 9.2,height = 3.8)
 
 hybrids <-c("MI-1-1_S10","PI-1-16_S16","DI-2-4_S17","ARL_15_S69")
 ```
 
-**The admixture plot based on PCAngsd**
+**Figure 1:** Principle component analysis of *A. kenti* based on genotype likelihoods of all variants. Plots display a) PC1 against PC2 and b) PC2 against PC3 with points coloured by reefs and shaped by location. The text labels in a) indicate the samples identified as hybrids.
+
 
 ```{r}
-q2_admixture <- read_table("data/hpc/pca/atenius.ind212.unique_mdust1M.pcangsd.admix.2.Q", col_names = c("X2","X1")) %>%
+q2_admixture <- read_table("data/04.population_structure/atenius.ind212.unique_mdust1M.pcangsd.admix.2.Q", col_names = c("X2","X1")) %>%
   add_column(sample_id = sample_ids) %>% 
   gather(cluster, proportion, -sample_id) %>% 
   left_join(sample_table) %>% 
@@ -82,63 +86,10 @@ p1 <- ggplot(q2_admixture ,aes(x=reorder(sample_id,pop_order),y=proportion)) +
 p1
 ```
 
-
-### LD-Pruned results
-
-We did the same PCA analysis with PCAngsd with LD-pruned SNPs.
-
-```{r fig.width=9.2, fig.height=3.8}
-covmat_unlinked <- read_table("data/hpc/pca/atenius.ld_pruned_snps.pcangsd.cov",col_names = F) %>% as.matrix()
-
-colnames(covmat_unlinked)<- sample_ids
-rownames(covmat_unlinked) <- sample_ids
-
-pop_eigen_unlinked <- eigen(covmat_unlinked)
-
-pop_pca12_unlinked <- data.frame(x=pop_eigen_unlinked$vectors[,1],y=pop_eigen_unlinked$vectors[,2],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
-pop_pca23_unlinked <- data.frame(x=pop_eigen_unlinked$vectors[,2],y=pop_eigen_unlinked$vectors[,3],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
-pc1 <- round(((pop_eigen_unlinked$values)/sum(pop_eigen$values))*100,2)[1]
-pc2 <- round(((pop_eigen_unlinked$values)/sum(pop_eigen$values))*100,2)[2]
-pc3 <- round(((pop_eigen_unlinked$values)/sum(pop_eigen$values))*100,2)[3]
-
-p1<-ggplot(pop_pca12_unlinked, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+
-  scale_color_manual(values = site_colors(), labels=site_labels()) + 
-  theme_test() + labs(x=paste0("PC1 (",pc1,"%)"),y=paste0("PC2 (",pc2,"%)"))+ theme(legend.position = "none")
-
-p2<-ggplot(pop_pca23_unlinked, aes(x=x,y=y)) + geom_point(aes(color=reorder(pop,pop_order),shape=reef),size=2)+
-  scale_color_manual(values = site_colors(), labels=site_labels()) + 
-  theme_test() + labs(x=paste0("PC2 (",pc2,"%)"),y=paste0("PC3 (",pc3,"%)"), shape="Location", color="Reef")
-
-cowplot::plot_grid(p1,p2,rel_widths = c(0.42,0.58), labels = c("a)","b)"),label_size = 12)
-```
-
-In this PCA plot, A minor discontinuity was in north reefs samples were observed but the results were qualitatively the same.
+**Figure 2:** Admixture proportions calculated with PCAngsd using the `auto_admix` option to infer the cluster number as K=2.  Asterixes highlight highly admixed individuals.
 
 
-```{r}
-q2_admixture_unlinked <- read_table("data/hpc/pca/atenius.ld_pruned_snps.pcangsd.admix.2.Q", col_names = c("X2","X1")) %>%
-  add_column(sample_id = sample_ids) %>% 
-  gather(cluster, proportion, -sample_id) %>% 
-  left_join(sample_table) %>% 
-  mutate(pop_order = site_order()[pop])
-
-p1 <- ggplot(q2_admixture_unlinked ,aes(x=reorder(sample_id,pop_order),y=proportion)) + 
-  geom_bar(aes(fill=cluster,color=cluster),stat="identity") + 
-  facet_grid(reorder(location,desc(pop_order))~., scales = "free") + coord_flip() + theme_pubclean() + labs(x="",y="Proportion (K=2)") + 
-  scale_fill_brewer(palette = "Set2") + 
-  scale_color_brewer(palette = "Set2") + 
-  theme_minimal() +
-  theme(axis.text.y = element_blank(),
-        legend.position = "none", 
-        axis.ticks = element_blank(),
-        panel.border = element_blank(), 
-        panel.background = element_blank(),
-        panel.grid = element_blank(),
-        strip.text.y  = element_text(size=12,angle =0,hjust = -0.1))
-p1
-```
-
-### Admixture analysis
+### Admixture analysis with NGSAdmix
 
 The individual admixture proportion was also inferred by `NGSAdmix` with K set to 2 and 3.
 
@@ -149,12 +100,12 @@ NGSadmix -likes atenius.ind212.unique_mdust1M.beagle.gz -K 3 -outfiles atenius.i
 NGSadmix -likes atenius.ld_pruned_snps.beagle.gz -K 2 -outfiles atenius.ld_pruned_snps.K2 -P 20 -minMaf 0.05 -minInd 100
 NGSadmix -likes atenius.ld_pruned_snps.beagle.gz -K 3 -outfiles atenius.ld_pruned_snps.K3 -P 20 -minMaf 0.05 -minInd 100
 ```
-The results from all snps were presented here.
+The results from all snps are presented here.
 
 ```{r, fig.width=9.8,fig.height=4}
-qopt2 <- read_table("data/hpc/ngsAdmix/atenius.ind212.unique_mdust1M.K2.qopt",col_names = c("X1","X2")) %>% 
+qopt2 <- read_table("data/04.population_structure/atenius.ind212.unique_mdust1M.K2.qopt",col_names = c("X1","X2")) %>% 
   add_column(sample_id = sample_ids) %>% gather(cluster, proportion, -sample_id) %>% left_join(sample_table) %>% mutate(pop_order = site_order()[pop])
-qopt3 <- read_table("data/hpc/ngsAdmix/atenius.ind212.unique_mdust1M.K3.qopt",col_names = c("X1","X2","X3")) %>%
+qopt3 <- read_table("data/04.population_structure/atenius.ind212.unique_mdust1M.K3.qopt",col_names = c("X1","X2","X3")) %>%
   add_column(sample_id = sample_ids) %>% gather(cluster, proportion, -sample_id) %>% left_join(sample_table) %>% mutate(pop_order = site_order()[pop])
 
 
@@ -190,3 +141,207 @@ cowplot::plot_grid(p1,p2,nrow=2,rel_heights = c(0.46,0.54))
 #ggsave("s-fig-admix.png",width = 9.6,height = 4)
 
 ```
+
+**Figure 3:** Ancestry proportions estimated in NGSadmix for K=2 (top) and K=3 (bottom). The mixed bars represent individuals with mixed ancestry profiles with different proportions.
+
+
+### PCA on non-Magnetic Island Samples
+
+To explore possible structure between inshore and offshore reefs in the non-Magnetic Island population we performed PCAngsd analysis based only on 187 samples from non-Magnetic Island reefs and excluding all hybrids identified above.
+
+In order to run this analysis we first needed to rerun ANGSD with the reduced number of samples
+
+```bash
+angsd -bam all_187_bam.list -ref ${ref} -anc ${ref} -C 50 \
+	-GL 2 -doGlf 2 -sites ${bed} -doMaf 1 -doCounts 1 -minQ 30 -minMapQ 30 -skipTriallelic 1 \
+	-nThreads 40 -uniqueOnly 1 -doMajorMinor 1  -minInd 100 -minmaf 0.05 -SNP_pval 1e-6 \
+	-out north_187_SNPs
+```
+
+And then ran `pcangsd` on this as follows
+
+```bash
+pcangsd -b north_187_SNPs.beagle.gz -t 40 -o north_187.pcangsd  --selection --minMaf 0.05 --sites_save
+```
+
+```{r}
+covmat <- read_table("data/inshore_offshore/north_187.pcangsd.cov",col_names = F) %>% as.matrix()
+
+sample_ids <- read_tsv("data/inshore_offshore/north187_sample_id.txt", col_names = "sample_id",show_col_types = FALSE) %>% pull(sample_id)
+
+colnames(covmat)<- sample_ids
+rownames(covmat) <- sample_ids
+
+
+pop_eigen <- eigen(covmat)
+sample_table <- read_csv("data/summary_data.csv",show_col_types = FALSE) %>% select(sample_id,pop,location,reef) %>% filter(pop!="MI")
+
+pop_pca12 <- data.frame(x=pop_eigen$vectors[,1],y=pop_eigen$vectors[,2],sample_id = sample_ids) %>% left_join(sample_table) %>% mutate(pop_order=site_order()[pop])
+
+pc1 <- round(((pop_eigen$values)/sum(pop_eigen$values))*100,2)[1]
+
+cbp1 <- c("#E69F00", "#56B4E9", "#009E73",
+          "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+ggplot(pop_pca12, aes(x=x,y=y)) + geom_point(aes(color=reef),size=2,alpha=.8)+ 
+   scale_color_manual(values = cbp1) +
+   theme_test() + 
+  labs(x=paste0("PC1 (",pc1,"%)"),y=paste0("PC2 (",pc2,"%)"), color="Reef")
+ggsave("figures/Figure_S4.png",width = 8,height = 6)
+```
+
+**Figure 4:** PCA calculated with PCAngsd for non-Magnetic Island samples only.
+
+### Population structure by pairwise IBS
+
+We used angsd to estimate the pairwise distance matrix based on IBS and excluded samples were identified as hybrids.
+
+IBS Values were calculated using ANGSD as follows
+
+```bash
+angsd -GL 2 -out atenius.ind212.unique_mdust1M_depth.ibs -doMajorMinor 1 -doMaf 1 -minmaf 0.05 \
+  -b ind212_bam.list -minmapQ 30 -minq 30 -sites reference_mappability_K50_E2.unique_mdust1M_depth.bed \
+  -doCounts 1 -doIBS 1 -makeMatrix 1 -minInd 100 \
+  -nThreads 40
+```
+
+We then used hierchical clustering via the `hclust` package in R to produce a tree based on IBS distances for all samples and then focussing purely on non Magnetic Island samples. 
+
+```{r}
+sample_ids <- read_tsv("data/qc/ind212.txt", col_names = "sample_id",show_col_types = FALSE) %>% pull(sample_id)
+ibs_matrix <- read_table("data/5.IBS_based/atenius.ind212.unique_mdust1M_depth.ibs.ibsMat",col_names = F) %>% as.matrix()
+
+ibs_matrix <- ibs_matrix[1:212,1:212]
+rownames(ibs_matrix) <- sample_ids
+colnames(ibs_matrix) <- sample_ids
+
+ibs_matrix <- ibs_matrix[-which(rownames(ibs_matrix) %in% c("MI-1-1_S10","PI-1-16_S16","DI-2-4_S17","ARL_15_S69")),-which(rownames(ibs_matrix)%in%c("MI-1-1_S10","PI-1-16_S16","DI-2-4_S17","ARL_15_S69"))]
+
+ibs_nomi <- ibs_matrix[-grep(rownames(ibs_matrix),pattern = "MI"),-grep(rownames(ibs_matrix),pattern = "MI")]
+```
+
+
+```{r}
+library(ggtreeDendro)
+library(cowplot)
+
+
+df <- read_csv("data/summary_data.csv",show_col_types = FALSE) %>% 
+  filter(sample_id %in% sample_ids) %>% 
+  rename(label=sample_id)
+
+ibs_hc <- hclust(as.dist(ibs_matrix))
+
+ibsp_both <- autoplot(ibs_hc,layout = "circular") %<+% df + 
+  geom_tippoint(aes(color=pop)) + 
+  scale_color_manual(values = site_colors(), labels=site_labels())
+  
+ibs_nomi_hc <- hclust(as.dist(ibs_nomi))
+ 
+ibsp_nomi <- autoplot(ibs_nomi_hc, layout = "circular") %<+% (df %>% filter(label!="MI")) + 
+   geom_tippoint(aes(color=pop)) + 
+  scale_color_manual(values = site_colors(), labels=site_labels())
+
+
+legend <- get_legend(
+  # create some space to the left of the legend
+  ibsp_both + theme(legend.box.margin = margin(0, 0, 0, 0), legend.title = element_blank(), legend.position = "bottom")
+)
+
+pd <- plot_grid(ibsp_both +theme(legend.position = "none"),ibsp_nomi + theme(legend.position = "none"),rel_widths = c(0.5,0.3))
+
+plot_grid(pd,legend,ncol = 1,rel_heights = c(0.8,0.2))
+```
+
+**Figure 5:** Dendrograms showing relationships inferred via hierarchical clustering based on IBS distances.  All samples (left) shows a strong distinction with Magnetic Island while a focus on non-Magnetic Island shows (right) shows no obvious clustering by reef or by shore (inshore/offshore).
+
+```{r}
+ps6 <- ibsp_nomi + theme(legend.title = element_blank())
+ggsave("figures/Figure_S5.png",width = 8,height = 6)
+```
+
+
+### Pairwise Fst between reefs
+
+
+To estimate pairwise Fst between reefs, we first used realSFS to calculate the site frequency spectrum (SFS) of each reef and 2D SFS of each pair of reefs using the saf files. realSFS was then used to get the Fst values between each pair.
+
+```bash
+angsd -bam {pop.bamlist} -ref {ref} -C 50 \
+  -GL 2 -doSaf 1 -sites {input.bed} \
+  -doCounts 1 -minQ 30 -minMapQ 30 -nThreads {threads} -uniqueOnly 1 -doMajorMinor 1 -out {pop}
+  
+#Fst
+realSFS -P {threads} {pop1}.saf.idx {pop2}.saf.idx -fold 1 > {pop1}-{pop2}.2dsfs
+realSFS fst index {pop1}.saf.idx {pop2}.saf.idx -sfs {pop1}-{pop2}.2dsfs -fstout {pop1}-{pop2}
+realSFS fst stats {pop1}-{pop2}.fst.idx 
+```
+
+Pairwise Fst values were then used to construct a bootstrapped tree using the ape function `boot.phylo`. 
+
+```{r}
+fst_table1 <- read_tsv("data/sfs_by_pop/pop_fst_table.txt",col_names = c("a","b","fst")) 
+fst_table2 <- read_tsv("data/sfs_by_pop/pop_fst_table.txt",col_names = c("b","a","fst")) 
+fst_table<- rbind(fst_table1,fst_table2) 
+
+mid<-max(fst_table$fst)/2
+fst_label = expression(italic("F")[site_order()])
+
+fst.matrix <- fst_table %>% filter(a!="north" &b!="north") %>% pivot_wider(names_from = a,values_from = fst,values_fill=0)%>% arrange(b) %>% column_to_rownames("b") %>% as.matrix()
+
+p_fst_grid <-  ggplot(data = fst_table2 %>% filter(a!="north"&b!="north"), aes(x = reorder(a,site_order()[a]), y = reorder(b,site_order()[b]), fill = fst))+
+  geom_tile(colour = "black")+
+  geom_text(aes(label = round(fst,digits=4)), color="black", size = 3)+
+  scale_fill_gradient2(low = "white", mid = "grey3", high = "darkgrey",midpoint = mid, name=expression(italic("F")[ST]),
+                       limits = c(0, max(fst_table1$fst)), breaks = c(0.02, 0.05, 0.10,0.20))+
+  scale_x_discrete(expand = c(0,0), position = "top")+
+  scale_y_discrete(expand = c(0,0), position = "left")+
+  theme(axis.text = element_text(colour = "black", size = 12, face = "bold"),
+        axis.title = element_blank(),
+        panel.grid = element_blank(),
+        panel.background = element_blank(),
+        legend.position = c(0.8,0.2),
+        legend.title = element_text(size = 12, face = "bold"),
+        legend.text = element_text(size = 12),
+        rect = element_rect(fill = "transparent")
+        )
+
+```
+
+
+
+```{r, fig.width=4, include=FALSE}
+require(stats)
+require(ggtree)
+tree <- ape::as.phylo(stats::hclust(stats::dist(fst.matrix), method = "average"))
+bootstrap.value <- ape::boot.phylo(phy = tree, x = fst.matrix, FUN = function(xx) ape::as.phylo(stats::hclust(stats::dist(xx), method = "average")) , block = 1, B = 10000, trees = FALSE, rooted = TRUE) 
+bootstrap.value <- round((bootstrap.value/10000)*100, 0)
+bootstrap.value
+tree$node.label <- bootstrap.value
+
+
+tree.figure <- ggtree(tree,ladderize = T)  + 
+    geom_tiplab(size = 3.5, hjust = -0.5, vjust = 0.5,fontface="bold")+ # for just the tip label
+  geom_nodelab(size=2.5,hjust = 1.2,vjust = 0.5, geom = "label") +
+#    geom_text(ggplot2::aes(label = label), size = 2, hjust = -2.5, vjust = 0.5) + # show bootstrap value
+    theme_tree() + 
+    theme( panel.background = element_rect(fill = "transparent",
+                                  colour = NA_character_), # necessary to avoid drawing panel outline
+  panel.grid.major = element_blank(), # get rid of major grid
+  panel.grid.minor = element_blank(), # get rid of minor grid
+  plot.background = element_rect(fill = "transparent",
+                                 colour = NA_character_), # necessary to avoid drawing plot outline
+  legend.background = element_rect(fill = "transparent"),
+  legend.box.background = element_rect(fill = "transparent"),
+  legend.key = element_rect(fill = "transparent")) +
+    xlim(-0.025, 0.4) 
+#tree.figure
+```
+
+
+```{r}
+plot_grid(p_fst_grid,tree.figure,rel_widths = c(0.6,0.5))
+ggsave("figures/Figure_S6.png",width = 8,height = 6)
+```
+
+**Figure 6:** Pairwise Fst values calculated between all pairs of sampling locations. Node labels in tree are bootstrap support values calculated using `boot.phylo`.
