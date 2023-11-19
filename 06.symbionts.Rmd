@@ -211,21 +211,31 @@ sample_data_symb <- sample_data %>%
   ))
 
 # Save this classification to a tsv file
-sample_data_symb %>% 
-  select(sample_id,symbiont) %>% 
-  write_tsv(file = "data/symbiomito/haplogroups.tsv")
+# sample_data_symb %>% 
+#   select(sample_id,symbiont) %>% 
+#   write_tsv(file = "data/symbiomito/haplogroups.tsv")
 
 ggtree(symb_tree_r) %<+% sample_data_symb +
   geom_tippoint(aes(color=symbiont)) + geom_tiplab(size=2) + theme(legend.title = element_blank())
 
-ggsave(filename = "figures/Figure_S9.png",width = 8,height = 14)
+ggsave(filename = "figures/Figure_S9.png",width = 8,height = 10)
 ```
 
 
 This allows us to extract representatives of the two major haplogroups which we label `C1` and `C2` after @Abrego2009-nn . Since it is also possible that other divergent clades might be present we focus only on those samples where the dominant clade can be clearly identified as belonging to one of these haplogroups.  Individual samples with long branches and members of divergent clades are therefore excluded.
 
 ## Distance based on D2S statistics
-To further make use of symbiont reads in our data, we applied the `mod2s` pipeline to calculate a d2s matrix
+To further make use of symbiont reads in our data, we applied the `mod2s` pipeline to calculate a d2s matrix based on Cladocopium reads. 
+First we extracted and cleaned reads that map to the Cladocopium genome
+
+```bash
+  samtools fastq -F 1024 ${bamfile} | bwa mem -t 16 ${symbcref} - | samtools view -b -F 4 - > genome_bams/${sample}_C1_genome.bam
+  samtools view -F 1796 -q 20 -b genome_bams/${sample}_C1_genome.bam > symbc/${sample}_filtered.bam	
+	samtools fastq symbc/${sample}_filtered.bam | gzip > symbc/${sample}.fastq.gz 
+	fastp -i symbc/${sample}.fastq.gz -e 30 -D -5 10 -3 10 -o symbc/${sample}_fastp.fastq.gz
+```
+
+
 
 ```bash
 nextflow run marine-omics/mod2s -profile genomics -r main --samples symb.csv --outdir symb_d2s --n_reads 100000
@@ -247,11 +257,24 @@ mds_d2sm <- d2sm %>%
     reef=="MI" ~ "Magnetic Island",
     .default = pop
   ))
-         
+
+mds_d2sm %>% 
+  ggplot(aes(x=V1,y=V2)) + 
+  geom_point(aes(color=symbiont)) + 
+  theme_pubr() + 
+  theme(legend.title = element_blank(),legend.position = "right") +
+  xlab("MDS 1") + ylab("MDS 2")
+ggsave("figures/Figure_S10.png",width = 8,height = 6)
+```
+
+
+```{r}
 p1 <- mds_d2sm %>% 
   ggplot(aes(x=V1,y=V2)) + 
   geom_point(aes(color=symbiont)) + 
   theme_pubclean()
+
+
 
 p2 <- mds_d2sm %>% 
   ggplot(aes(x=V1,y=V2)) + 

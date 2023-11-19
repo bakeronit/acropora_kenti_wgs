@@ -54,13 +54,14 @@ def sup_update(in_file, agp_file, args):
                 print(line)  # Print this comment line
             else:
                 fields = line.split("\t")
+                orig_pos = [fields[0],fields[1]]
                 if args.file_type=='gff':
                     h, s, e, st = fields[0], int(fields[3]), int(fields[4]), fields[6]
                     s -= 1  # Keep everything zero-indexed
                 elif args.file_type=='bed':
-                    h, s, e, st = fields[0], int(float(fields[1])), int(fields[2]), fields[4]
+                    h, s, e, st = fields[0], int(fields[1]), int(fields[2]), fields[4]
                 elif args.file_type=='pos':
-                    h, s = fields[0], int(float(fields[1]))
+                    h, s = fields[0], int(fields[1])
                     e=s
                     st="+"
                 else:
@@ -102,7 +103,7 @@ def sup_update(in_file, agp_file, args):
                     fields[1] = str(new_s)
 
                 if args.keep:
-                    print(line+ "\t"+"\t".join(fields))
+                    print("\t".join(fields)+"\t" + "\t".join(orig_pos))
                 else:
                     print("\t".join(fields))
 

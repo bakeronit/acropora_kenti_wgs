@@ -1,0 +1,115 @@
+---
+title: "Genetic Distances between Inversion Haplotypes"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+
+```{r}
+library(ggtree)
+library(tidyverse)
+library(colorspace)
+library(cowplot)
+source("functions.R")
+```
+
+To investigate the age of inversions relative to the split between Magnetic Island and non-Magnetic Island populations we calculated genetic distances between pairs of individuals at inversion loci using [ngsDist](https://github.com/fgvieira/ngsDist). 
+
+Starting with ANGSD genotype likelihoods calculated on all 212 correctly identified unrelated individuals we extracted data for SNPs contained within each inversion and also for a set of 100, 50kb regions randomly sampled from the genome.  For each of these subsets we ran `ngsDist` as shown.  Here `n` refers to the inversion label. 
+
+```bash
+ngsDist --geno all_L${n}.beagle.gz --probs \
+		--n_ind 212 --n_sites $(cat pos_L${n}.tsv | wc -l) \
+		--labels labels.txt --pos pos_L${n}.tsv \
+		--out L${n}.dist --n_threads 10 --pairwise_del
+```
+
+We then used the `hclust` package in R to generate a UPGMA tree based on pairwise distance matrices for each of these datasets.
+
+```{r}
+genotype_data <- read_rds("cache/inv_genotype_data.rds")
+
+sample_table <- read_sample_table() %>% 
+  left_join(genotype_data) 
+
+long_annotation <- sample_table %>% 
+  pivot_longer(starts_with("L",ignore.case=FALSE),names_to = "locus", values_to = "genotype") %>% 
+  filter( !(is.na(genotype) & reef!="MI") ) %>% 
+  mutate(geno_label = case_when(
+    genotype=="A/A" ~ "AA",
+    genotype=="A/B" ~ "AB",
+    genotype=="B/B" ~ "BB",
+    .default = "Magnetic Island"
+  )) %>% 
+  mutate(alpha = case_when(
+    reef=="MI" ~ "1",
+    .default = "0.5"
+  ))
+```
+
+```{r}
+geno_colors <- qualitative_hcl(palette="Dark 2",n=3)
+
+make_dendro <- function(path,locin="L1"){
+
+  m <- read_table(path,skip = 2,col_names = FALSE) %>% 
+    column_to_rownames("X1") %>% 
+    as.matrix()
+
+  colnames(m) <- rownames(m)
+  
+  clust <- hclust(as.dist(m))
+
+  dendro <- clust %>% as.dendrogram()
+
+  annotation <- long_annotation %>% 
+    filter(locus==locin)
+#  browser()
+      
+  ggtree(dendro,color="grey") %<+% annotation + 
+  geom_tippoint(aes(color=geno_label,alpha = geno_label, size = geno_label)) + 
+  scale_color_manual(values = c("AA"=geno_colors[1],"AB"=geno_colors[2],"BB"=geno_colors[3],"Magnetic Island"="black"))+ 
+    scale_alpha_manual(values = c("AA"=0.8,"AB"=0.8,"BB"=0.8,"Magnetic Island"=1)) +
+    scale_size_manual(values = c("AA"=1.5,"AB"=1.5,"BB"=1.5,"Magnetic Island"=1.5)) +
+  theme(legend.title = element_blank(), legend.position = "top")
+}
+
+
+l1p <- make_dendro("data/ngsdist/L1.dist","L1")
+l1rp <- make_dendro("data/ngsdist/random.dist","L1")
+
+l2p <- make_dendro("data/ngsdist/L2.dist","L2")
+l2rp <- make_dendro("data/ngsdist/random.dist","L2")
+
+l3p <- make_dendro("data/ngsdist/L3.dist","L3")
+l3rp <- make_dendro("data/ngsdist/random.dist","L3")
+
+l4p <- make_dendro("data/ngsdist/L4.dist","L4")
+l4rp <- make_dendro("data/ngsdist/random.dist","L4")
+
+l5p <- make_dendro("data/ngsdist/L5.dist","L5")
+l5rp <- make_dendro("data/ngsdist/random.dist","L5")
+```
+
+
+```{r}
+legend <- get_legend(
+  l1p
+)
+
+r1 <- plot_grid(l1p + theme(legend.position = "none"),l1rp + theme(legend.position = "none"),nrow = 1)
+r2 <- plot_grid(l2p + theme(legend.position = "none"),l2rp + theme(legend.position = "none"),nrow = 1)
+r3 <- plot_grid(l3p + theme(legend.position = "none"),l3rp + theme(legend.position = "none"),nrow = 1)
+r4 <- plot_grid(l4p + theme(legend.position = "none"),l4rp + theme(legend.position = "none"),nrow = 1)
+r5 <- plot_grid(l5p + theme(legend.position = "none"),l5rp + theme(legend.position = "none"),nrow = 1)
+
+plot_grid(r1,r2,r3,r4,r5,legend,ncol = 1,rel_heights = c(1,1,1,1,1,0.1),labels = c("L1","L2","L3","L4","L5",""))
+
+ggsave("figures/Figure_S14.png",height = 10,width = 8)
+```
+
+**Figure 1:** Sample clustering based on pairwise genetic distances within inversion regions.  Each row shows sampled clustered and labelled according to genotypes for the corresponding inversion (L1-5) (left).  Plots on the right show clustering based on pairwise distances of the genomic background and use the same sample labelling the corresponding plot on the left. 
+

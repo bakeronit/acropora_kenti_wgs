@@ -1,0 +1,165 @@
+---
+title: "Figure 3 : Identifying Inversion Loci"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggpubr)
+library(colorspace)
+library(cowplot)
+source("figure_utils.R")
+```
+
+
+```{r}
+pcangsd_smooth_df <- read_rds("cache/pcangsd.rds")
+
+
+inv_df_poly <- read_rds("cache/inv_df_poly.rds") %>% 
+  left_join(offsets) %>% 
+  mutate(abs_x = x + offset) %>% 
+  mutate(abs_y = y + offset) 
+ 
+inv_labels <- inv_df_poly %>% 
+   group_by(locus) %>% 
+   summarise(x=mean(abs_x),y=mean(abs_y))
+
+ccols <- hcl.colors(n=3,palette = "Tropic") 
+
+manhattan_p <- pcangsd_smooth_df %>% 
+  filter(pval>0.3) %>% 
+  ggplot() + 
+  geom_point(aes(x=abs_pos/1e+6,y=pval,color=chr_type),size=0.2) +
+#  geom_polygon(data = inv_df_poly,aes(x=x/1e+6,y=y,group = invlabel),fill="orange")  +
+  geom_text(data = inv_labels,aes(x=x/1e+6,y=-0,label=locus), nudge_y = -0.5) +
+  scale_x_continuous(label = axis_chr$chr_id, breaks = axis_chr$centre/1e6) + 
+#  geom_hline(yintercept = 3,alpha=0.5) + 
+  xlab("Chromosome") +
+  ylab("-Log10(p)") + 
+  theme_pubr() +
+  guides(color="none") +
+  scale_color_manual(values = c("light"=ccols[1],"dark"="grey","unplaced"=ccols[3])) +
+  theme(text=element_text(size=main_text))
+```
+
+```{r}
+geno_colors = hcl.colors(n=3,palette = "Berlin")
+
+pcclusters_p <- read_rds("cache/pc1_genotype_data.rds") %>% 
+  group_by(locus) %>% 
+  mutate(pc1 = max(pc1)-pc1) %>% 
+  mutate(genotype = case_when(
+    genotype %in% c("A/B","B/A") ~ "AB",
+    genotype == "A/A" ~ "AA",
+    genotype == "B/B" ~ "BB",
+    .default = genotype
+  )) %>% 
+  ggplot() + 
+  geom_jitter(aes(x=locus,y=pc1,color=genotype)) +
+  scale_color_manual("Genotype",values = c("AA"=geno_colors[1],"AB"=geno_colors[2],"BB"=geno_colors[3])) +
+  xlab("") + 
+  ylab("PC1") +
+  guides(color="none") +
+  theme_pubr() + 
+  theme(text=element_text(size=main_text))
+
+library(ggExtra)
+pcclusters_l1_p <- 
+  read_rds("cache/pc1_genotype_data.rds") %>% 
+  group_by(locus) %>% 
+  mutate(pc1 = max(pc1)-pc1) %>% 
+  mutate(genotype = case_when(
+    genotype %in% c("A/B","B/A") ~ "AB",
+    genotype == "A/A" ~ "AA",
+    genotype == "B/B" ~ "BB",
+    .default = genotype
+  )) %>% 
+  filter(locus=="L1") %>% 
+  ggplot() +
+  geom_jitter(aes(x=pop,y=pc1,color=genotype),size=0.5) +
+  scale_color_manual("Genotype",values = c("AA"=geno_colors[1],"AB"=geno_colors[2],"BB"=geno_colors[3])) +
+  xlab("") +
+  ylab("PC1") +
+  guides(color="none") +
+  theme_pubr() +
+  theme(text=element_text(size=main_text)) 
+```
+
+```{r}
+pcclusters_l1_m_p <- ggMarginal(pcclusters_l1_p,type = "histogram")
+```
+
+
+```{r}
+allhets <- read_rds("cache/inv_hets.rds")
+
+hets_p <- allhets %>% 
+  na.omit() %>% 
+  ggplot(aes(x=locus,y=het)) + 
+    geom_boxplot(aes(color=genotype),fill="transparent") +
+  scale_color_manual("Genotype",values = c("AA"=geno_colors[1],"AB"=geno_colors[2],"BB"=geno_colors[3])) +
+  theme_pubr() +
+  #theme_pubclean()  + 
+  guides(color="none") +
+  xlab("") + ylab("Heterozygosity") +
+  theme(text=element_text(size=main_text))
+
+hets_l1_p <- allhets %>% 
+  filter(locus=="L1") %>% 
+  na.omit() %>% 
+  ggplot(aes(x=genotype,y=het)) + 
+    geom_boxplot(aes(color=genotype),fill="transparent") +
+    geom_jitter(aes(color=genotype),size=0.5) +
+  scale_color_manual("Genotype",values = c("AA"=geno_colors[1],"AB"=geno_colors[2],"BB"=geno_colors[3])) +
+  theme_pubr() +
+  #theme_pubclean()  + 
+  guides(color="none") +
+  xlab("") + ylab("Heterozygosity") +
+  theme(text=element_text(size=main_text))
+
+```
+
+
+```{r}
+ld_av <- read_rds("data/11.check_locus_ld/ld_av.rds")
+ld_nsamples <- read_rds("data/11.check_locus_ld/ld_nsamples.rds")
+
+ldl1_p <- 
+  ld_av %>% 
+  filter(locus=="L1") %>% 
+  left_join(ld_nsamples) %>% 
+  filter(category!="hom_minor") %>% 
+  mutate(p2_pc = case_when(
+    category=="hom_major" ~ p1_p,
+    .default = p2_p
+  )) %>% 
+  mutate(p1_pc = case_when(
+    category=="hom_major" ~ p2_p,
+    .default = p1_p
+  )) %>% 
+  mutate(r21 = case_when(
+    p2_pc==p1_pc ~ 0,
+    .default = r21
+  )) %>% 
+  ggplot(aes(x=p1_pc/1e6,p2_pc/1e6)) +
+  geom_tile(aes(fill=r21)) + 
+  geom_abline(slope=1,linewidth=1,color = "pink") +
+  geom_polygon(data = (inv_df_poly %>% filter(locus=="L1")),aes(x=x/1e6,y=y/1e6),fill="transparent",colour = "pink") +    
+  scale_fill_viridis_c(option="H",name= expression( r^2 )) +
+  theme_pubr() + 
+  theme(legend.position = "right") + 
+  theme(text=element_text(size=main_text)) +
+  xlab("Position / Mb") + ylab("Position / Mb")
+```
+
+
+
+```{r}
+bottom_row <- plot_grid(pcclusters_l1_m_p,hets_l1_p,ldl1_p,nrow=1,rel_widths = c(0.3,0.3,0.4), labels = c("B","C","D"))
+
+plot_grid(manhattan_p,bottom_row,ncol = 1,labels = "A")
+ggsave("figures/Figure3.png",height = 6,width = 10,bg = "white")
+```
+

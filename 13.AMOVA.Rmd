@@ -1,0 +1,82 @@
+---
+title: "AMOVA_A.kenti"
+author: "Nadja Schneller"
+date: "2023-09-14"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,fig.retina = 2)
+#code source: youtube video Analysis of Molecular Variance (AMOVA) in R - by GenFlick Consultants
+```
+
+
+```{r}
+source("functions.R")
+library(adegenet)
+library(poppr)
+library(tidyverse)
+library(knitr)
+```
+
+
+We use analysis of molecular variance (AMOVA) to test for associations between inversion genotypes and two key ecological factors structuring our samples.  The first of these inshore/offshore corresponds to major differences in turbidity, salinity, temperature variability and proximity to terrestrial inputs (nutrients, agricultural chemicals etc). 
+
+We used the `amova` function in the poppr package to test whether genetic variance among sites distributed across both shores (inshore/offshore) was greater than within shore.  A model with reef nested within shore was used to account for the fact that samples were taken in groups from 9 reefs and randtest with 999 repeats was used to test the significance of variance components @Excoffier1992-pe through random permutations of the data. No variance component in this analysis was statistically stignificant (p>0.2).
+
+```{r, include=FALSE}
+genotype_data <- read_sample_table() %>% 
+  add_symbionts() %>% 
+  add_inversion_genotypes() %>% 
+  na.omit() %>% 
+  filter(reef!="MI")
+```
+
+
+```{r, include=FALSE}
+Pdat <- genotype_data %>% dplyr::select(sample_id,pop,reef)
+
+amova_shore <- function(locus){
+  allele_data <- genotype_data %>% dplyr::select({{ locus }})
+  genind <- df2genind(allele_data,sep="/",ind.names = genotype_data$sample_id, strata = Pdat)
+  agc <- as.genclone(genind)
+  amova_result <- poppr.amova(agc, ~pop/reef, clonecorrect = FALSE)
+  rt <- randtest(amova_result, nrepet = 999)
+#  list(amov=amova_result,rand=rt)
+#  browser()
+  data.frame(locus = locus,statphi = amova_result$statphi$Phi[1],pvalue = rt$pvalue[1])
+}
+
+shore_results <- map_dfr(c("L1","L2","L3","L4","L5"),amova_shore)
+```
+
+```{r}
+kable(shore_results)
+```
+
+
+To test whether symbiont type was associated with inversion haplotype we conducted AMOVA again but this time with the model ~symbiont/reef where symbiont was coded according to whether the colony harboured C1 or C2.  All colonies with uncertain dominant symbiont were excluded. 
+
+```{r}
+
+genotype_data_sym <- genotype_data %>% 
+  filter(symbiont!="Uncertain")
+
+Pdat_sym <- genotype_data_sym %>% dplyr::select(sample_id,symbiont,reef)
+#allele_data_sym <- genotype_data_sym %>% dplyr::select(L1,L2,L3,L4,L5)
+
+amova_symbiont <- function(locus){
+  allele_data_sym <- genotype_data_sym %>% dplyr::select({{ locus }})
+  genind <- df2genind(allele_data_sym,sep="/",ind.names = genotype_data_sym$sample_id, strata = Pdat_sym)
+  agc <- as.genclone(genind)
+  amova_result <- poppr.amova(agc, ~symbiont/reef, clonecorrect = FALSE)
+  rt <- randtest(amova_result, nrepet = 999)
+  data.frame(locus = locus,statphi = amova_result$statphi$Phi[1],pvalue = rt$pvalue[1])
+}
+
+symbiont_results <- map_dfr(c("L1","L2","L3","L4","L5"),amova_symbiont)
+kable(symbiont_results)
+```
+
+
+

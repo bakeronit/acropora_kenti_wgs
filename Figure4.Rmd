@@ -1,0 +1,131 @@
+---
+title: "Figure 4"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggtree)
+library(ggpubr)
+library(colorspace)
+library(cowplot)
+source("figure_utils.R")
+source("functions.R")
+```
+
+
+
+```{r}
+genotype_data <- read_rds("cache/inv_genotype_data.rds")
+
+sample_table <- read_sample_table() %>% 
+  left_join(genotype_data) 
+
+l1_annotation <- sample_table %>% 
+  mutate(geno_label = case_when(
+    L1=="A/A" ~ "AA",
+    L1=="A/B" ~ "AB",
+    L1=="B/B" ~ "BB",
+    .default = "Magnetic Island"
+  ))
+
+geno_colors <- qualitative_hcl(palette="Dark 2",n=3)
+
+l1_dist <- read_table("data/ngsdist/L1.dist",skip = 2,col_names = FALSE) %>% 
+  column_to_rownames("X1") %>% as.matrix()
+colnames(l1_dist) <- rownames(l1_dist)
+l1_clust <- hclust(as.dist(l1_dist))
+
+l1_dendro <- l1_clust %>% as.dendrogram()
+p_l1 <- ggtree(l1_dendro,color="grey") %<+% l1_annotation + 
+  geom_tippoint(aes(color=geno_label,alpha = geno_label, size = geno_label)) + 
+  scale_color_manual(values = c("AA"=geno_colors[1],"AB"=geno_colors[2],"BB"=geno_colors[3],"Magnetic Island"="black"))+ 
+  scale_alpha_manual(values = c("AA"=0.8,"AB"=0.8,"BB"=0.8,"Magnetic Island"=1)) +
+  scale_size_manual(values = c("AA"=1.5,"AB"=1.5,"BB"=1.5,"Magnetic Island"=1.5)) + 
+  theme(legend.title = element_blank(), legend.position = "top")
+
+random_dist <- read_table("data/ngsdist/random.dist",skip = 2,col_names = FALSE) %>% 
+  column_to_rownames("X1") %>% as.matrix()
+colnames(random_dist) <- rownames(random_dist)
+random_clust <- hclust(as.dist(random_dist))
+
+random_dendro <- random_clust %>% as.dendrogram()
+p_random <- ggtree(random_dendro,color="grey") %<+% l1_annotation + 
+  geom_tippoint(aes(color=geno_label,alpha = geno_label, size = geno_label)) + 
+  scale_color_manual(values = c("AA"=geno_colors[1],"AB"=geno_colors[2],"BB"=geno_colors[3],"Magnetic Island"="black"))+ 
+  scale_alpha_manual(values = c("AA"=0.8,"AB"=0.8,"BB"=0.8,"Magnetic Island"=1)) +
+  scale_size_manual(values = c("AA"=1.5,"AB"=1.5,"BB"=1.5,"Magnetic Island"=1.5)) +
+  theme(legend.title = element_blank(), legend.position = "top") 
+```
+
+
+```{r}
+snpeff <- read_rds("data/snpeff/snpeff.rds")
+
+region_totals <- snpeff %>% 
+  na.omit() %>% 
+  filter(AF<0.99) %>% # Removing errors in the reference
+  group_by(region) %>% summarise(n=n())
+
+p_snps <- snpeff %>% 
+  na.omit() %>% 
+  filter(AF<0.99) %>% 
+  group_by(region) %>% 
+  slice_sample(n=min(region_totals$n)) %>% 
+  mutate(af_cat = cut(AF,breaks = c(0,0.05,0.15,0.3,0.5,0.7,1.0),ordered_result = TRUE,labels = FALSE)) %>%
+  group_by(region,severity,af_cat) %>%
+  summarise(num_snps = n()) %>% 
+    mutate(severity_order = case_when(
+    severity=="HIGH" ~ 4,
+    severity=="MODERATE" ~ 3,
+    severity=="LOW" ~ 2,
+    .default = 1
+  )) %>%
+  mutate(af = case_when(
+    af_cat==1 ~ 0.05/2,
+    af_cat==2 ~ 0.1,
+    af_cat==3 ~ (0.15+0.3)/2,
+    af_cat==4 ~ (0.3+0.5)/2,
+    af_cat==5 ~ (0.5+0.7)/2,
+    af_cat==6 ~ (0.7+1)/2
+  )) %>% 
+  filter(severity!="MODIFIER") %>% 
+  ggplot(aes(x=af)) + 
+  geom_line(aes(y=num_snps,color=region)) +
+  geom_point(aes(y=num_snps,color=region)) +
+  facet_wrap(~reorder(severity,severity_order) ,scales = "free_y",ncol = 1) + 
+  theme_pubr() + 
+  theme(text=element_text(size=main_text)) +
+  theme(axis.text.x = element_text(angle=0), legend.title = element_blank()) + 
+  scale_color_manual(values = c("background"="darkgrey","inversion"="red"), labels = c("Background","Inversions")) +
+  xlab("Allele Frequency") + ylab("Normalised number of SNPs")
+```
+
+
+
+```{r}
+library(cowplot)
+
+legend <- get_legend(
+  # create some space to the left of the legend
+  p_l1 + theme(legend.box.margin = margin(0, 0, 0, 12))
+)
+
+p_dendro <- plot_grid(p_random+theme(legend.position = "none"),p_l1+theme(legend.position = "none"),nrow = 1)
+
+p_dendro_legend <- plot_grid(legend,p_dendro,ncol = 1,rel_heights = c(0.1,1))
+
+legend_snps <- get_legend(
+  p_snps + theme(legend.box.margin = margin(0, 0, 0, 12))
+)
+
+p_snps_legend <- plot_grid(legend_snps,p_snps,ncol = 1,rel_heights = c(0.1,1))
+
+plot_grid(p_snps,p_dendro_legend,ncol = 2,rel_widths = c(0.3,0.7),labels = c("A","B"))
+
+
+
+ggsave("figures/Figure4.png",height = 6,width = 12,bg = "white")
+```
+

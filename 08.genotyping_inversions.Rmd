@@ -1,0 +1,173 @@
+---
+title: "Genotyping Inversions"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.retina = 2)
+library(tidyverse)
+library(ggpubr)
+source("functions.R")
+```
+
+
+### Local population structure within inversions
+
+After performing an initial genome-wide PCAngsd analysis to identify inversion locations we reran PCAngsd analyses using data within each inversion region in turn. 
+
+To run PCAngsd within inversions we first extracted the relevant subset of genotype likelihood data for each inversion in turn.
+
+```bash
+bedtools intersect -u -b <(cat L*.bed) -a <(zcat north_187_SNPs.beagle.gz | awk '{split($1,a,"_");printf("%s\t%s\t%s\t%s\n",a[1],a[2],a[2]+1,$0)}' | grep -v 'marker') > north_187_SNPs_invsites.txt
+
+for Lx in L1 L2 L3 L4 L5;do 
+	cat <(zcat north_187_SNPs.beagle.gz | head -n 1) <(bedtools intersect -u -b ${Lx}.bed -a north_187_SNPs_invsites.txt | cut -f 4-) | gzip > ${Lx}.beagle.gz; 
+done
+```
+
+We then ran PCAngsd separately for each of these datasets.  In this instance we are only interested in the covariance matrix so `-selection` options are not used.
+
+```bash
+for Lx in L1 L2 L3 L4 L5;do pcangsd -b ${Lx}.beagle.gz -o ${Lx}.pcangsd -t 20;done
+```
+
+```{r}
+inversion_bounds <- read_tsv("data/inshore_offshore/north_187.selection.ragtag_inversions.gff",
+                             col_names = c("chr","X1","X2","start","end","score"))
+```
+
+
+
+```{r}
+read_pccov <- function(path,sample_ids,sample_table){
+  lnum <- basename(path) %>% str_extract("L[0-9]")
+  cm <- read_table(path,col_names = F) %>% as.matrix()
+  eigen <- eigen(cm)
+  
+  colnames(cm)<- sample_ids
+  rownames(cm) <- sample_ids
+
+  data.frame(pc1=eigen$vectors[,1],sample_id = sample_ids) %>% 
+    left_join(sample_table) %>% 
+    add_column(locus=lnum) %>% 
+    add_column(pc1ev = eigen$values[1]/sum(eigen$values))
+}
+
+sample_ids <- read_tsv("data/inshore_offshore/north187_sample_id.txt", col_names = "sample_id",show_col_types = FALSE) %>% pull(sample_id)
+
+
+sample_table <- read_sample_table()
+
+pc1 <- list.files("data/inshore_offshore/",pattern = "L[12345].pcangsd.cov",full.names = T) %>% 
+  map_dfr(read_pccov,sample_ids,sample_table) %>% 
+  group_by(locus) %>% 
+  mutate(pc1 = pc1-min(pc1)) 
+
+pc1_fi <- pc1 %>% filter(sample_id=="FI-1-3_S9")
+
+pc1 %>% 
+    ggplot() + 
+    geom_jitter(aes(x=locus,y=pc1,color=locus),size=1.5) +
+    geom_point(data=pc1_fi,aes(x=locus,y=pc1),size=2.5,color="black") +
+    theme_pubr() + 
+    guides(color="none") +
+    xlab("Locus") + ylab("Relative PC1")
+```
+
+
+
+## Inference of Inversion Genotypes
+
+Inversions give rise to a characteristic pattern of genetic structure when PCA is applied to SNPs within the inversion region. This structure groups samples into three clusters corresponding to three potential genotypes of the inversion itself, ie A/A, A/B, B/A where A and B represent the two orientations of the inversion.  In cases where the clusters are clear it is possible to infer the genotypes of samples according to their cluster membership and thereby investigate basic genetic properties of the inversion alleles.  
+
+To assign samples to clusters we use kmeans clustering (with k=3) based on position along PC1 and with the initial centers of clusters at min(PC1), (min(PC1)+max(PC1))/2, max(PC1) for genotypes A/A, A/B and B/B respectively. 
+
+
+```{r}
+pc1_genotypes <- function(pc1_loading){
+
+  pc1_loading %>% 
+    mutate(cluster=kmeans(pc1,c(min(pc1),(min(pc1)+max(pc1))/2,max(pc1)))$cluster) %>%
+    mutate(genotype = case_when(
+      cluster==1 ~ "A/A",
+      cluster==2 ~ "A/B",
+      cluster==3 ~ "B/B"
+    ))
+
+}
+
+pc1_genotype_data <- pc1 %>% 
+  group_by(locus) %>% group_map( ~ pc1_genotypes(.x),.keep = TRUE) %>% 
+  do.call(rbind,args=.)
+
+write_rds(pc1_genotype_data,"cache/pc1_genotype_data.rds")
+```
+
+To check that this automatic clustering method produces sensible cluster assignments we visualise asignments along with the original PC1 data for all inversion loci as in the plot below.
+
+```{r}
+  ggplot(pc1_genotype_data,aes(x=pop,y=pc1)) + 
+    geom_jitter(size=2,alpha=.8,width = 0.4,aes(color=as.factor(cluster))) +     
+    theme_pubr(base_size = 10) + labs(y="PC1",x="Location", shape="", color="") + 
+  theme(axis.text.x = element_text(angle=90), legend.position = "bottom") + 
+  facet_wrap(~locus,scales = "free_y",ncol = 5) + 
+  scale_color_discrete(name="Inversion Genotype",labels=c("A/A","A/B","B/B"))
+#ggsave("figures/Figure_S12.png",width = 8,height = 6)
+```
+
+
+```{r}
+genotype_data <- pc1_genotype_data %>% 
+  dplyr::select(-pc1,-cluster,-pc1ev) %>% 
+  pivot_wider(names_from = locus,values_from = genotype)
+write_rds(genotype_data,"cache/inv_genotype_data.rds")
+```
+
+
+```{r, eval=FALSE}
+#For the purposes of examining patterns of LD we want lists of het and hom samples at each locus.  These are written to file for use in other analyses
+
+write_tsv(genotype_data,"data/genotype_data.tsv")
+```
+
+Having assigned genotypes we then performed two tests. First we tested to see if overall distribution of genotypes at each locus is in Hardy Weinberg Equilibrium (HWE). We found no significant deviations from HWE.
+
+```{r}
+library(genetics)
+library(adegenet)
+library(hierfstat)
+
+allele_data <- genotype_data %>% dplyr::select(L1,L2,L3,L4,L5)
+hwe_L1 <- HWE.test(genotype(allele_data$L1))
+hwe_L2 <- HWE.test(genotype(allele_data$L2))
+hwe_L3 <- HWE.test(genotype(allele_data$L3))
+hwe_L4 <- HWE.test(genotype(allele_data$L4))
+hwe_L5 <- HWE.test(genotype(allele_data$L5))
+
+hwe_pvalues <- c("L1"=hwe_L1$test$p.value,"L2"=hwe_L2$test$p.value,"L3"=hwe_L3$test$p.value,"L4"=hwe_L4$test$p.value,"L5"=hwe_L5$test$p.value)
+mafs <- c("L1"=min(hwe_L1$diseq$allele.freq),"L2"=min(hwe_L2$diseq$allele.freq),"L3"=min(hwe_L3$diseq$allele.freq),"L4"=min(hwe_L4$diseq$allele.freq),"L5"=min(hwe_L5$diseq$allele.freq))
+```
+
+HWE Test results
+
+```{r}
+print(hwe_pvalues)
+```
+
+
+Minor allele frequencies for each locus
+
+```{r}
+print(mafs)
+```
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,140 @@
+---
+title: "Using snpeff to examine mutational load"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(ggpubr)
+```
+
+To examine mutational load in inversions compared we first used bcftools to call variants within inversion and within a control set of loci consisting of 100 randomly selected 50kb regions.  We also performed the same analysis using SNP calls extracted from ANGSD with qualitatively similar results, however, since ANGSD is unable to call small indels it is likely to miss many high impact mutations which are the main focus of this analysis. 
+
+### Variant calling with `bcftools`
+
+bcftools calls were made from the same bam files as used for ANGSD. Base call and read mapping quality filters were set to remove low quality (phred < 20) bases and alignments. Here the `regions.bed` file includes all inversions as well as background control regions.
+
+```bash
+mpileup -Ou -q 20 -Q 20 \
+	-R regions.bed\
+	--annotate FORMAT/AD,FORMAT/ADF,FORMAT/ADR,FORMAT/DP,FORMAT/SP,INFO/AD,INFO/ADF,INFO/ADR \
+	--threads 40 -f $fasta \
+	-b bamlist.txt | \
+    ${bcftoolsbin} call --threads 48 -mv -Oz -o north187.vcf.gz
+```
+
+Variant calls were then filtered to retain only high quality (Phred<30), biallelic variants and remove singletons.  Variants with biased strand balance (FS<20) or with more than 50% missing genotypes were also removed. 
+
+```bash
+bcftools view --min-ac 2 --max-alleles 2 -i 'QUAL>30 && INFO/FS<20 &&  F_PASS(FORMAT/GT!="mis") > 0.5' -R inversion_mappable.bed north187.vcf.gz  > north187_inv.vcf
+```
+
+### snpEff
+
+We first built a snpEff database from the *A. kenti* reference genome and gene models available on [reef genomics](http://aten.reefgenomics.org/) according to the instructions on the snpEff website. 
+
+We then ran `snpEff` to classify variants on each of our variant datasets using the `-no-intergenic` option to focus analyses entirely within genes. This precaution should mitigate potential biases that might occur due to differences in gene density between inversion regions and the genomic background
+
+```bash
+java -jar snpEff/snpEff.jar -no-intergenic  aten north187_inv.vcf > north187_inv.snpeff.vcf
+```
+
+We then classified variants according to their variant "severity", paying attention to variants with low, medium and high severity. Variants were also classified by allele frequency.  Here we chose to ignore variants with very high frequency (AF>0.99) as these likely correspond to rare variants or errors in the reference sequence. 
+
+```{r,eval=FALSE}
+vcfcols <- c("chr","pos","a","ref","alt","d","score","info")
+read_snpeff_fb <- function(path,region){
+  read_tsv(path,col_names = vcfcols) %>% 
+  tidyr::extract(info,into = c("AF","ANN"),regex = "AF=([^;]*).*ANN=([^;]*)") %>% 
+  separate(ANN,into=c("allele","consequence","severity"), sep="\\|") %>% 
+  add_column(region=region)
+}
+
+read_snpeff_angsd <- function(path,region){
+  read_tsv(path,col_names = vcfcols) %>% 
+  tidyr::extract(info,into = c("MAF","AF","ANN"),regex = "MAF=([^;]*).*AF=([^;]*).*ANN=([^;]*)") %>% 
+  separate(ANN,into=c("allele","consequence","severity"), sep="\\|") %>% 
+  add_column(region=region)
+}
+
+read_snpeff_bcftools <- function(path,region){
+  read_tsv(path,col_names = vcfcols) %>% 
+  tidyr::extract(info,into = c("AD1","AD2","ANN"),regex = "AD=([0-9]*),([0-9]*).*ANN=([^;]*)",remove = FALSE) %>%     
+  separate(ANN,into=c("allele","consequence","severity"), sep="\\|") %>% 
+  add_column(region=region) %>% 
+    mutate(AF=as.numeric(AD2)/(as.numeric(AD1)+as.numeric(AD2)))
+}
+
+inv_snpeff <- read_snpeff_bcftools("snpeff/north187_inv.snpeff.tsv","inversion")
+background_snpeff <- read_snpeff_bcftools("snpeff/north187_random.snpeff.tsv","background")
+
+snpeff <- rbind(inv_snpeff,background_snpeff)
+write_rds(snpeff,"data/snpeff/snpeff.rds")
+```
+
+```{r}
+snpeff <- read_rds("data/snpeff/snpeff.rds")
+
+snp_summ <- snpeff %>%
+  filter(severity!="MODIFIER") %>%   
+  filter(!grepl("INDEL",info)) %>% 
+  mutate(AF=as.numeric(AF)) %>%
+  na.omit() %>%
+  mutate(maf = case_when(
+    AF<0.5 ~ as.numeric(AF),
+    .default = 1-as.numeric(AF)
+  )) %>%
+  filter(AF<0.99) %>% 
+  mutate(maf_cat = cut(maf,breaks = c(0,0.1,0.2,0.5))) %>%
+  mutate(af_cat = cut(AF,breaks = c(0,0.05,0.1,0.2,0.5,1))) %>%
+  group_by(region,severity,af_cat) %>%
+  summarise(num_snps = n()) %>% 
+  ungroup() %>% 
+  group_by(region,af_cat) %>%
+  mutate(total = sum(num_snps)) %>%
+  group_by(region,af_cat,severity) %>%
+  summarise(proportion = num_snps/total,num_snps) %>%
+  mutate(severity_order = case_when(
+    severity=="HIGH" ~ 4,
+    severity=="MODERATE" ~ 3,
+    severity=="LOW" ~ 2,
+    .default = 1
+  ))
+
+snp_summ %>% 
+  na.omit() %>% 
+    ggplot(aes(x=af_cat,y=proportion)) + 
+  geom_point(aes(color=region)) + 
+  facet_wrap(~reorder(severity,severity_order),scales = "free") + 
+  xlab("Minor Allele Frequency") + ylab("Proportion of SNPs") +
+  theme(axis.text.x = element_text(angle=90))
+```
+
+```{r}
+region_totals <- snpeff %>% 
+  na.omit() %>% 
+  filter(AF<0.99) %>% 
+  group_by(region) %>% summarise(n=n())
+
+snpeff %>% 
+  na.omit() %>% 
+  filter(AF<0.99) %>% 
+  group_by(region) %>% 
+  slice_sample(n=min(region_totals$n)) %>% 
+  mutate(severity_order = case_when(
+    severity=="HIGH" ~ 4,
+    severity=="MODERATE" ~ 3,
+    severity=="LOW" ~ 2,
+    .default = 1
+  )) %>% 
+  filter(severity!="MODIFIER") %>% 
+  ggplot(aes(x=AF)) + 
+  geom_freqpoly(aes(color=region),alpha=1,breaks=c(0,0.05,0.15,0.3,0.5,0.9,1.0),pad=TRUE) + 
+  facet_wrap(~reorder(severity,severity_order) ,scales = "free_y",ncol = 3) + 
+  theme_pubr() + xlim(c(0,1.1))
+```
+
+
+
+

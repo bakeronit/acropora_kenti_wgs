@@ -1,0 +1,102 @@
+---
+title: "Individual heterozygosity within inversions"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.retina = 2)
+library(tidyverse)
+library(ggpubr)
+source("functions.R")
+```
+
+Our genome-wide scan based on PCA revealed local regions significantly structuring the populations within samples from the north reefs (except Magnetic Island). The PCA plots of these regions display three clusters. Here, we examined the individual heterozygosity of samples in each cluster.
+
+Angsd was used again to estimate saf and calculate the number of heterozygous sites within regions. 
+
+First mappable sites within regions were identified and indexed
+
+```bash
+bedtools subtract -a ${locus}.bed -b $bed | bedtools sort > ${locus}_mappable.sites
+../angsd/angsd sites index ${locus}_mappable.sites
+```
+
+Then ANGSD and realSFS were used to calculate heterozygosity
+
+```bash
+../angsd/angsd -i $i -ref ${ref} -anc ${ref} -C 50 \
+    -GL 2 -doSaf 1 \
+    -sites ${locus}_mappable.sites \
+    -doCounts 1 \
+    -setMinDepth 2 -setMaxDepth 12\
+    -minQ 30 -minMapQ 30 -nThreads 15 -uniqueOnly 1 -doMajorMinor 1  -out hets/${sample}_${locus}
+
+../angsd/misc/realSFS -fold 1 -P 15 hets/${sample}_${locus}.saf.idx > hets/${sample}_${locus}.ml
+```
+
+Results for all loci and all individuals are captured in `all_het.tsv`
+
+```bash
+for f in *.ml;do bn=$(basename $f); s=${bn%.ml}; h=$(awk '{print $2/$1}' $f); printf "%s\t%s\n" $s $h;done > all_het.tsv
+```
+
+
+```{r}
+sample_table <- read_sample_table() %>% 
+  add_inversion_genotypes() %>% 
+  pivot_longer(starts_with("L", ignore.case=F), names_to = "locus",values_to = "genotype")
+
+allhets <- read_tsv("data/13.locus_stats/all_het.tsv",col_names = c("label","het")) %>% 
+  tidyr::extract(label,into=c("sample_id","locus"),regex = "(.*)_(L[1-5])") %>% 
+  left_join(sample_table) %>% 
+  mutate(genotype = case_when(
+    genotype %in% c("A/B","B/A") ~ "AB",
+    genotype == "A/A" ~ "AA",
+    genotype == "B/B" ~ "BB",
+    .default = genotype
+  ))
+
+write_rds(allhets,"cache/inv_hets.rds")
+```
+
+```{r}
+phet <- allhets %>% 
+  na.omit() %>% 
+  ggplot(aes(x=genotype,y=het)) + 
+    geom_jitter(alpha=0.5,aes(color=genotype)) + 
+    geom_boxplot(aes(color=genotype),fill="transparent") +
+    facet_wrap(~locus,nrow = 1) + 
+  theme_linedraw() +
+  #theme_pubclean()  + 
+  guides(color="none") +
+  xlab("") + ylab("Heterozygosity")
+phet
+```
+
+
+```{r}
+# Combined plot with clusters for supp figure S12
+#
+library(cowplot)
+pc1_genotype_data <- read_rds("cache/pc1_genotype_data.rds")
+
+pclust <- ggplot(pc1_genotype_data,aes(x=pop,y=pc1)) + 
+  geom_jitter(size=2,alpha=.8,width = 0.4,aes(color=as.factor(cluster))) +   
+  theme_linedraw()+ 
+  labs(y="PC1",x="Location", shape="", color="") + 
+  theme(axis.text.x = element_text(angle=90), legend.position = "bottom") + 
+  facet_wrap(~locus,scales = "free_y",ncol = 5) + 
+  scale_color_discrete(name="Inversion Genotype",labels=c("A/A","A/B","B/B"))
+
+legend <- get_legend(
+  pclust + theme(legend.box.margin = margin(0, 0, 0, 0))
+)
+
+
+
+pa <- plot_grid(pclust+theme(legend.position = "none"),phet,nrow = 2,align = "v",rel_heights = c(0.4,0.4),labels = c("A","B"))
+ps12 <- plot_grid(pa,legend,nrow = 2,rel_heights = c(0.9,0.05))
+ggsave(ps12,filename = "figures/Figure_S12.png",height = 6,width = 8)
+```
+
+

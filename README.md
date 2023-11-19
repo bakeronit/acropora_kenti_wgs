@@ -16,3 +16,15 @@ Analysis and code including in this project
 ### Symbionts
 
 - [Symbiont profiles and symbiont haplogroups](06.symbionts.md)
+
+### Inversions
+
+- [Finding Inversions using PCAngsd](07.finding_inversions.md)
+- [Genotyping Inversions](08.genotyping_inversions.md)
+- [Individual heterozygosity](09.inversion_het.md)
+- [Linkage disequilibrium around inversions](10.inversion_ld.md)
+- [Genetic Distances between inversion haplotypes](11.genetic_distances.md)
+- [Variant Severity](12.snpeff.md)
+- [Test for spatial and ecological association](13.AMOVA.md)
+
+

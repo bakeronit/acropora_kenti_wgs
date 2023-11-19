@@ -60,12 +60,12 @@ add_reef_colors <- function(data){
 }
 
 add_symbionts <- function(data){
-  sm <- read_tsv("symbiomito/haplogroups.tsv",show_col_types = FALSE)
+  sm <- read_tsv("data/symbiomito/haplogroups.tsv",show_col_types = FALSE)
   data %>% dplyr::left_join(sm) 
 }
 
 add_inversion_genotypes <- function(data){
-  gd <- read_tsv("11.check_locus_LD_ic/genotype_data.tsv",show_col_types = FALSE) %>% 
+  gd <- read_tsv("data/genotype_data.tsv",show_col_types = FALSE) %>% 
     dplyr::select(sample_id,starts_with("L"))
   data %>% left_join(gd)
 }

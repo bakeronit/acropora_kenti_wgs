@@ -1,0 +1,169 @@
+---
+title: "LD in and around Inversions"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+
+```{r}
+library(tidyverse)
+options(readr.show_col_types = FALSE)
+```
+
+Since inversions are known to strongly suppress recombination in heterozygotes we expect to see elevated linkage disequilibrium within inversions compared with surrounding regions of the genome.  In addition, we expect that this pattern of LD should be most visible when analysing data for heterozygotes and much less so for homozygotes. 
+
+To check whether this expected pattern of LD was present for inversions identified in A. kenti we used [ngsLD](https://github.com/fgvieira/ngsLD) to calculate linkage disequilibrium for genomic intervals centered on each inversion and extending up to 1Mb either side of inversion start and end points. 
+
+For each inversion we identified the majority allele and then extracted genotype likelihood data for a 1Mb flanking interval around each inversion separately for heterozygotes and for homozygotes of the majority allele.  For each of these datasets we then calculated LD using ngsLD as follows (example for inversion L4 and BB genotypes)
+
+```bash
+ngsLD --geno <L1_BB_genolikelihoods.gz> --probs --pos north_187_SNPs.ragtag_L4.sites \
+            --n_ind 25 --n_sites 13677 --n_threads 10 --max_kb_dist 0 --rnd_sample 0.01 \
+            --out L4_BB
+```
+
+For inversions L1-L4 we randomly subsampled SNPs to 1% in order to reduce computational load, however since there were far fewer SNPs available in L5 we subsampled 50% of SNPs.
+
+We then used tidyverse functions in R to divide each interval into a 30x30 grid and calculate the mean value of the r2 statistic for all SNPs within each gridded interval. 
+
+```{r,eval=FALSE}
+# Code here is designed to read and condense raw outputs from ngsLD.  Since these raw outputs are large they are not included in the github repo.  We use only the saved rds files at the end of this process.
+
+read_ld <- function(file){
+  name_parts <- (basename(file) %>% str_split("_"))[[1]]
+  read_tsv(file,col_names = c("p1","p2","dist","r2","D","D1","r21")) %>% 
+  extract(p1,"p1",":(.*)",convert = TRUE) %>% 
+  extract(p2,"p2",":(.*)",convert = TRUE) %>% 
+  add_column(genotype=name_parts[2]) %>% 
+  add_column(locus=name_parts[1]) %>% 
+  filter(is.finite(r21))
+}
+
+ld_all <- list.files("11.check_locus_LD_ic/","L[12345]_[AB][AB]",full.names = T) %>% 
+  map_dfr(read_ld)
+
+ld_bounds <- ld_all %>% 
+  group_by(locus) %>% 
+  summarise(pmax = max(p1,p2),pmin=min(p1,p2))
+
+p12breaks <- ld_bounds %>% split(ld_bounds$locus) %>% map( ~ seq(from=.x$pmin,to=.x$pmax,length.out = 30))
+
+ld_av <- ld_all %>% 
+  group_by(locus) %>% 
+  mutate(p1_c = cut(p1,breaks = p12breaks[locus][[1]],labels=FALSE)) %>% 
+  mutate(p2_c = cut(p2,breaks = p12breaks[locus][[1]],labels=FALSE)) %>% 
+  mutate(p1_p = p12breaks[locus][[1]][p1_c]) %>% 
+  mutate(p2_p = p12breaks[locus][[1]][p2_c]) %>% 
+  group_by(locus,p1_c,p2_c,genotype) %>% 
+  summarise(across(everything(),~ mean(.x,na.rm = TRUE)),count=n())
+
+ld_nsamples <- read_table("11.check_locus_LD_ic/ld_nsamples.txt",col_names = c("nsamples","id")) %>% 
+  separate(id,into = c("locus","genotype"),sep="_") %>% 
+  group_by(locus) %>% 
+  mutate( category = case_when(
+    nsamples==min(nsamples) ~ "hom_minor",
+    (nsamples>min(nsamples)) & (genotype!="AB") ~ "hom_major",
+    genotype=="AB" ~ "het"
+  ) )
+
+write_rds(ld_nsamples,"data/11.check_locus_ld/ld_nsamples.rds")
+write_rds(ld_av,"data/11.check_locus_ld/ld_av.rds")
+```
+
+
+```{r}
+read_inv_interval <- function(path){
+  id <- basename(path) %>% str_extract("L[1-5]")
+  read_tsv(path,col_names = c("chr","start","end")) %>% 
+    add_column(locus=id)
+}
+inv_bed <- list.files(path = "data/11.check_locus_ld/",pattern = "*ragtag.bed",full.names = T) %>% 
+  map_dfr(read_inv_interval)
+
+
+inv_df_poly <- inv_bed[rep(row.names(inv_bed),4),] %>% 
+  group_by(locus) %>% 
+  mutate(r=row_number()) %>% 
+  mutate(y = case_when(
+    r==1 ~ start,
+    r==2 ~ start,
+    r==3 ~ end,
+    r==4 ~ end
+  )) %>% 
+  mutate(x = case_when(
+    r==1 ~ start,
+    r==2 ~ end,
+    r==3 ~ end,
+    r==4 ~ start
+  )) %>% 
+  arrange(locus)
+
+write_rds(inv_df_poly,"cache/inv_df_poly.rds")
+```
+
+
+```{r}
+ld_nsamples <- read_rds("data/11.check_locus_ld/ld_nsamples.rds")
+ld_av <- read_rds("data/11.check_locus_ld/ld_av.rds")
+
+plot_ld <- function(lcs){
+  ld_av %>% 
+    filter(locus==lcs) %>% 
+    left_join(ld_nsamples) %>% 
+    filter(category!="hom_minor") %>% 
+    mutate(p2_pc = case_when(
+      category=="hom_major" ~ p1_p,
+      .default = p2_p
+    )) %>% 
+    mutate(p1_pc = case_when(
+      category=="hom_major" ~ p2_p,
+      .default = p1_p
+    )) %>% 
+    mutate(r21 = case_when(
+      p2_pc==p1_pc ~ 0,
+      .default = r21
+    ))     %>% 
+    
+    
+    ggplot(aes(x=p1_pc/1e6,p2_pc/1e6)) +
+    geom_tile(aes(fill=r21)) + 
+    geom_abline(slope=1,linewidth=1,color = "pink") +
+    geom_polygon(data = (inv_df_poly %>% filter(locus==lcs)),aes(x=x/1e6,y=y/1e6),fill="transparent",colour = "pink") +    
+    scale_fill_viridis_c(name = expression(r^2),option="H",limits = c(0,0.35)) + 
+    xlab("") + ylab("") + 
+    theme_linedraw()
+}
+
+ldp1 <- plot_ld("L1")
+ldp2 <- plot_ld("L2")
+ldp3 <- plot_ld("L3")
+ldp4 <- plot_ld("L4")
+ldp5 <- plot_ld("L5")
+```
+
+
+```{r}
+library(cowplot)
+
+legend <- get_legend(
+  ldp1 + theme(legend.box.margin = margin(0, 0, 0, 0), legend.position = c(0.5,0.5))
+)
+
+plot_grid(ldp1 + theme(legend.position = "none") + xlab("Chr 1"),
+          ldp2 + theme(legend.position = "none") + xlab("Chr 2"),
+          ldp3 + theme(legend.position = "none") + xlab("Chr 5"),
+          ldp4 + theme(legend.position = "none") + xlab("Chr 11"),
+          ldp5 + theme(legend.position = "none") + xlab("Sc0000151"),
+          legend,ncol = 3, labels = c("L1","L2","L3","L4","L5",""))
+
+ggsave(filename = "figures/Figure_S13.png",height = 6,width = 10)
+```
+
+
+Figure 1: Linkage disequilibrium at inversion loci calculated with ngsLD.  Values in each pixel represent the average for all SNPs within the interval. All grid coordinates are based on pseudo-chromosome coordinates calculated with RagTag and are in units of megabases. Black diagonal lines divide each plot into LD for homozygotes of the most common haplotype (bottom right) and heterozygotes (top left). 
+
+
+

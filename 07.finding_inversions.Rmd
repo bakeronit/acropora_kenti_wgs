@@ -1,0 +1,227 @@
+---
+title: "Finding Inversions"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.retina = 2)
+library(tidyverse)
+library(ggpubr)
+source("functions.R")
+#source("scripts/my_color.R")
+```
+
+
+### Inversions as signatures of local population structure
+
+We used the `-selection` option in [PCAngsd](https://github.com/Rosemeis/pcangsd) to calculate the Galinsky statistic for all loci genome-wide.  This analysis was performed for all 187 non-Magnetic Island individuals (excluding hybrids) after first using ANGSD to calculate genotype likelihoods for this subset of the data. 
+
+Data were prepared for PCAngsd using ANGSD as follows
+
+```bash
+angsd -bam all_187_bam.list -ref ${ref} -anc ${ref} -C 50 \
+	-GL 2 -doGlf 2 -sites ${bed} -doMaf 1 -doCounts 1 -minQ 30 -minMapQ 30 -skipTriallelic 1 \
+	-nThreads 40 -uniqueOnly 1 -doMajorMinor 1  -minInd 100 -minmaf 0.05 -SNP_pval 1e-6 \
+	-out north_187_SNPs
+```
+
+And then PCAngsd was run using the resulting genotype likelihoods
+
+```bash
+pcangsd -b north_187_SNPs.beagle.gz -t 40 -o north_187.pcangsd  --selection --minMaf 0.05 --sites_save
+```
+
+
+
+```{r, eval=FALSE}
+# Process pcangsd results to produce a table with p-values at each SNP position
+# We write these out so they can be transformed via ragtag
+library(RcppCNPy)
+
+# North
+D_ni <- npyLoad("data/inshore_offshore/north_187.pcangsd.selection.npy") 
+read_table("data/inshore_offshore/north_187.pcangsd.pos",col_names = c("chr","pos"),col_types = "cc") %>% 
+  add_column(stat=D_ni,pval=pchisq(stat, 1, lower.tail=FALSE)) %>% 
+  write.table("data/inshore_offshore/north_187.selection.txt",quote = F,row.names = F,sep = "\t",col.names = F)
+```
+
+This results in outputs in `.npy` format.  We read these into R using the `npyLoad` function of the `RcppCNPy` package.  Since the Galinsky statistic is Chi Square distributed we calculated a p-value using the `pchisq` function in R for each variant and wrote this back out to a text file.  
+
+We then converted coordinates for this file into pseudochromosome coordinates using RagTag.
+
+```bash
+cd data/inshore_offshore/
+python ../../scripts/translate_coords.py north_187.selection.txt ../ragtag/ragtag.scaffold.agp > north_187.selection.ragtag.txt
+```
+
+In order to smooth and reduce the size of the data we used bedtools to calculate average p-values within 100kb windows with a 10kb slide. Smoothed data was qualitatively similar to non-smoothed data but smaller in volume and had slightly reduced background noise. 
+
+```bash
+# Convert PCAngsd galinsky results to bed format and transform p-value into -log10(p)
+cat north_187.selection.ragtag.txt | awk '{OFS="\t";print $1,$2,$2,-log($4)/log(10)}' > north_187.selection.ragtag.bed
+
+# Sort bed file for use with bedtools
+bedtools sort -g ../ragtag/ragtag.scaffold.genome -i north_187.selection.ragtag.bed > north_187.selection.ragtag.sorted.bed
+
+# Use bedtools map to calculate an average over sliding windows
+bedtools map -g ../ragtag/ragtag.scaffold.genome -a ../ragtag/ragtag.scaffold.w100s10.bed -b north_187.selection.ragtag.sorted.bed -c 4 -o mean  | awk '$4!="."' > north_187.selection.w100s10.bed
+```
+
+```{r}
+lengths <- read_tsv("data/ragtag/ragtag.scaffold_lengths.txt", col_names = c("chr","length"),show_col_types = FALSE)
+
+offsets <- lengths %>% arrange(desc(length)) %>% 
+  dplyr::mutate(offset=cumsum(length)-length) %>% 
+  dplyr::mutate(scaffold_num = row_number())
+
+axis_chr<- offsets %>% 
+  mutate(centre=offset+length/2) %>% 
+  mutate(chr_id=ifelse(grepl(chr,pattern="chr"),chr,"Unplaced")) %>% 
+  mutate(chr_id=str_remove(chr_id,"_RagTag"),chr_id=str_remove(chr_id,"chr")) %>% 
+  group_by(chr_id) %>% 
+  summarise(centre = mean(centre))
+```
+
+```{r, eval=FALSE}
+read_pcangsd_df <- function(path,label){
+  read_table(path,col_names = c("chr","pos","stat","pval")) %>% 
+  left_join(offsets) %>% 
+  mutate(abs_pos = pos + offset) %>% 
+  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% 
+  mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplaced")) %>% 
+    add_column(label=label)
+}
+
+pcangsd_df<- read_pcangsd_df("gadi_ic/inshore_offshore/north_187.selection.ragtag.txt","north")
+```
+
+
+```{r, eval=FALSE}
+pcangsd_df %>% 
+  filter(-log10(pval) > 2) %>% 
+  ggplot(aes(x=abs_pos/1e+6,y=-log10(pval),color=chr_type)) + 
+  geom_point(size=1,alpha=.6) + 
+  facet_wrap(~label,ncol = 1)  + 
+  scale_x_continuous(label = axis_chr$chr_id, breaks = axis_chr$centre/1e6) 
+```
+
+
+
+```{r}
+read_smoothed <- function(path){
+  read_table(path,col_names = c("chr","start","end","pval")) %>% 
+  left_join(offsets) %>% 
+  mutate(abs_pos = start + offset) %>% 
+  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% 
+  mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplaced"))   
+}
+
+smooth_df <- read_smoothed("data/inshore_offshore/north_187.selection.w100s10.bed")
+
+#write_rds(smooth_df,"cache/pcangsd.rds")
+
+library(colorspace)
+ccols <- hcl.colors(n=3,palette = "Tropic") 
+
+smooth_df %>% 
+  ggplot(aes(x=abs_pos/1e+6,y=pval,color=chr_type)) + 
+  geom_point(size=1,alpha=.6) +
+  scale_x_continuous(label = axis_chr$chr_id, breaks = axis_chr$centre/1e6) + 
+  geom_hline(yintercept = 3) + 
+  theme_pubr() + 
+  xlab("Chromosome") +
+  ylab("-Log10(p)") + 
+  guides(color="none") +
+  scale_color_manual(values = c("light"=ccols[1],"dark"="grey","unplaced"=ccols[3])) +
+  theme(text=element_text(size=10))
+```
+
+**Figure 1:** Manhattan plot of the selection statistics from PCAngsd applied to north GBR samples. Using a p-value threshold of p<0.001 (horizontal line) delineates the five inversions discussed in the paper.  
+
+### Delineating inversion boundaries. 
+
+First we used a custom [python script](scripts/sf2gff.py) to find all genomic regions with -log10(p) greater than our threshold of 3 and export this to gff format.
+
+```bash
+sf2gff.py -t 3 north_187.selection.w100s10.bed > north_187.selection.ragtag_inversions.gff
+```
+
+We then converted coordinates for these intervals back to the original (non RagTag) genomic coordinate system. 
+
+```bash
+# Translating coordinates from ragtag back to original for the significant intervals
+paste north_187.selection.ragtag.txt north_187.selection.txt | awk '{printf("%s\t%s\t%s\t%s_%s\n", $1,$2,$2,$5,$6)}' > north_187.selection.coordtrans.bed
+
+bedtools intersect -a north_187.selection.ragtag_inversions.gff -b north_187.selection.coordtrans.bed -wo > north_187.selection.ragtag_inversions_original.txt
+
+
+grep 'chr1_' north_187.selection.ragtag_inversions_original.txt  | awk '{print $13}' | awk -F "_" '{OFS="\t";print $1,$2,$2+1}' > L1.positions.txt
+
+grep 'chr2_' north_187.selection.ragtag_inversions_original.txt  | awk '{print $13}' | awk -F "_" '{OFS="\t";print $1,$2,$2+1}' > L2.positions.txt
+
+grep 'chr11_' north_187.selection.ragtag_inversions_original.txt  | awk '{print $13}' | awk -F "_" '{OFS="\t";print $1,$2+1}' > L3.positions.txt
+
+grep 'chr5_' north_187.selection.ragtag_inversions_original.txt  | awk '{print $13}' | awk -F "_" '{OFS="\t";print $1,$2+1}' > L5.positions.txt
+
+grep 'Sc0000151_' north_187.selection.ragtag_inversions_original.txt  | awk '{print $13}' | awk -F "_" '{OFS="\t";print $1,$2+1}' > L4.positions.txt 
+
+for f in L*.positions.txt;do
+	bedtools groupby -i ${f} -g 1 -c 2 -o min,max > ${f%.positions.txt}.bed
+done
+```
+
+At the end of this process we have the following coordinates for inversions
+
+```{r}
+read_inv <- function(path){
+  inv <- basename(path) %>% str_extract("L[0-5]")
+  read_tsv(path,col_names = c("scaffold","start","end")) %>% 
+    add_column(inversion=inv)
+}
+
+list.files("data/inshore_offshore/",pattern = "L[1-5].bed",full.names = T) %>% map_dfr(read_inv)
+```
+
+
+### Inversion signatures at Magnetic Island
+
+After removing hybrids and close kin only 21 samples were available for analysis at Magnetic Island.  Running the ANGSD and PCAngsd analysis for this cohort did not show any outlier peaks of local genetic structure, however, given the very low sample size this may not be an indicator that the inversion are absent in the Magnetic Island population. 
+
+
+To check the effect of sample size on our ability to detect inversions we performed ANGSD and PCAngsd analysis on a random subset of 21 individuals. 
+
+
+```{r}
+
+smooth_df_21 <- read_smoothed("data/inshore_offshore/north_187_SNPs_s21_1.selection.w100s10.bed") #%>% add_column(dataset="north_21")
+smooth_df_30 <- read_smoothed("data/inshore_offshore/north_187_SNPs_s30_1.selection.w100s10.bed") #%>% add_column(dataset="north_30")
+smooth_df_mi <- read_smoothed("data/mi_only/mi_nohybrids.selection.w100s10.bed")
+
+smooth_df_all <- rbind(
+  smooth_df %>% add_column(dataset="anorth"),
+  smooth_df_21 %>% add_column(dataset="bnorth_21"),  
+  smooth_df_mi %>% add_column(dataset="cmi")
+) 
+
+dslabs <- c("Non Magnetic Island (187)","Non Magnetic Island (21)","Magnetic Island (21)")
+names(dslabs) <- c("anorth","bnorth_21","cmi")
+
+smooth_df_all %>% 
+  ggplot(aes(x=abs_pos/1e+6,y=pval,color=chr_type)) + 
+  geom_point(size=1,alpha=.6) +
+  scale_x_continuous(label = axis_chr$chr_id, breaks = axis_chr$centre/1e6) + 
+  geom_hline(yintercept = 3) + 
+  theme_pubr() + 
+  xlab("Chromosome") +
+  ylab("-Log10(p)") + 
+  guides(color="none") +
+  scale_color_manual(values = c("light"=ccols[1],"dark"="grey","unplaced"=ccols[3])) +
+  theme(text=element_text(size=10)) + 
+  facet_wrap(~dataset,ncol = 1, labeller=labeller(dataset =dslabs))
+ggsave("figures/Figure_S11.png",width = 8,height = 6)
+```
+
+**Figure 2:** Manhattan plots showing signals of local genetic structure in the A. kenti genome. Horizontal line in each plot shows a p=0.001 significance threshold. Top plot shows the results for all non-hybrid individuals in the non-Magnetic Island population, for which five highly significant peaks are present.  Bottom two plots show a lack of significance at Magnetic Island (21 samples) and a random subset of 21 individuals from the non-Magnetic Island population. 
+
+
+
