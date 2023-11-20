@@ -1,0 +1,123 @@
+---
+title: "GO term enrichment on genes implicated in outlier fst regions and inversions"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.retina = 2)
+library(tidyverse)
+```
+
+To investigate genes within inversions we first used bedtools to find all genes that overlapped with inversions
+
+```bash
+bedtools intersect -b <(bedtools sort -i inversions.bed) \
+	-a aten_0.11.maker_post_001.genes.gff -wao | awk '$10!="."{OFS="\t";print $1,$2,$3,$4,$5,$6,$7,$8,$9,$13}' \
+	> genes_in_inversions.tsv
+```
+
+This identified a total of 214 genes that overlapped with one of the five inversion loci.
+
+
+```{r}
+read_genes_inv <- function(path){
+  # Load table of overlaps between sweeps and genes at the chosen threshold
+  gff_cols <- c('scaffold','source','feature','start','end','score','strand','phase','attributes')
+  genes_cols <- c(gff_cols,"inv")
+
+  read_tsv(path,col_names = genes_cols) %>% 
+    filter(feature=="gene") %>% 
+    tidyr::extract(attributes,into="geneid",regex = "ID=([^;]*)",remove = FALSE) %>% 
+    dplyr::select(scaffold,start,end,geneid,inv) 
+}
+
+inv_genes <- read_genes_inv("data/bedtools/genes_in_inversions.tsv")
+```
+
+We then used `topGO` to identify GO terms that are enriched in this gene set compared with the background (all genes in the genome).  We used gene functional annotation information obtained from BLAST searches against the Swissprot database as described in @Cooke2020-qv
+
+
+
+
+```{r}
+library(topGO)
+
+# Read in annotation information
+# Gene annotations
+annotations <- read_tsv("data/annotation/annotation_table.tsv", col_types = cols()) %>% 
+  mutate(gene_id = str_remove(aten_id,".m1$")) 
+
+gostring2vector <- function(gostring){
+   str_split(gostring,";")[[1]] %>% str_trim()
+}
+
+gene_ids <- annotations$gene_id
+
+
+gostrings <- annotations$`Gene ontology IDs`
+
+geneID2GO <- lapply(gostrings,gostring2vector)
+names(geneID2GO) <- gene_ids
+```
+
+
+`topGO` was run using a nodeSize of 5 and the weight01 algorithm which weights terms depending on position in the GO hierarchy to reduce the chance that high level terms will be falsely called as significant due to enrichment of more specific (lower) terms. 
+
+```{r}
+get_enrichment <- function(onto,sweep_genes){
+
+    target_list_membership <- factor(as.integer(gene_ids %in% sweep_genes))
+    names(target_list_membership) <- gene_ids
+    
+    GOdata <- new("topGOdata", 
+                  ontology = onto, 
+                  allGenes = target_list_membership, 
+                  annot = annFUN.gene2GO, 
+                  gene2GO = geneID2GO,
+                  nodeSize = 5) 
+    
+    # This runs the test to see if there are significantly enriched GO terms
+    resultFis <- runTest(GOdata, algorithm = "weight01", statistic = "fisher")
+    
+    gt <- GenTable(GOdata, classic = resultFis,orderBy = "weight", ranksOf = "classic", topNodes = 50)
+    list(godata = GOdata, result = resultFis, table = gt)
+}
+```
+
+
+```{r}
+inv_bp <- get_enrichment("BP",inv_genes %>% pull(geneid))
+inv_mf <- get_enrichment("MF",inv_genes %>% pull(geneid))
+inv_cc <- get_enrichment("CC",inv_genes %>% pull(geneid))
+
+enrich_table <- rbind(
+  inv_bp$table %>% add_column(ontology="BP") %>% add_column(label="inv"),
+  inv_mf$table %>% add_column(ontology="MF") %>% add_column(label="inv"),
+  inv_cc$table %>% add_column(ontology="CC") %>% add_column(label="inv")
+  ) %>% 
+  as_tibble() %>% 
+  mutate(classic=as.numeric(classic))
+```
+
+This revealed a single term "DNA Binding" that was
+
+```{r}
+enrich_table %>% 
+  filter(classic<0.01) %>%
+  filter(Significant>1) %>% 
+  write_tsv("cache/go_enrich.tsv")
+```
+
+
+
+Although a total of 14 terms were significant at the p<0.01 level many of these were based on very few genes (3 or less).  The most significant term was DNA Binding (p=8.10E-05) and based on 14 genes. 
+
+Further investigation of the genes supporting enrichment of DNA binding revealed that these genes were distributed across L1, L2 and L5 inversions. 
+
+```{r}
+gt <- genesInTerm(inv_mf$godata,'GO:0003677')[[1]] %>% intersect(inv_genes$geneid)
+inv_genes %>% filter(geneid %in% gt) %>% 
+   left_join(annotations,by=c("geneid"="gene_id")) %>% write_tsv("cache/dna_binding_genes.tsv")
+```
+
+

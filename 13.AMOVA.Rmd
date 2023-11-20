@@ -42,9 +42,7 @@ amova_shore <- function(locus){
   agc <- as.genclone(genind)
   amova_result <- poppr.amova(agc, ~pop/reef, clonecorrect = FALSE)
   rt <- randtest(amova_result, nrepet = 999)
-#  list(amov=amova_result,rand=rt)
-#  browser()
-  data.frame(locus = locus,statphi = amova_result$statphi$Phi[1],pvalue = rt$pvalue[1])
+  data.frame(locus = locus,statphi = amova_result$statphi$Phi[1],prop_var = amova_result$componentsofcovariance$`%`[1],pvalue = rt$pvalue[1])
 }
 
 shore_results <- map_dfr(c("L1","L2","L3","L4","L5"),amova_shore)
@@ -71,7 +69,7 @@ amova_symbiont <- function(locus){
   agc <- as.genclone(genind)
   amova_result <- poppr.amova(agc, ~symbiont/reef, clonecorrect = FALSE)
   rt <- randtest(amova_result, nrepet = 999)
-  data.frame(locus = locus,statphi = amova_result$statphi$Phi[1],pvalue = rt$pvalue[1])
+  data.frame(locus = locus,statphi = amova_result$statphi$Phi[1],prop_var = amova_result$componentsofcovariance$`%`[1],pvalue = rt$pvalue[1])
 }
 
 symbiont_results <- map_dfr(c("L1","L2","L3","L4","L5"),amova_symbiont)

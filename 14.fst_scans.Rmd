@@ -1,0 +1,302 @@
+---
+title: "Scans for allele frequency differences (Fst) between groups"
+output: github_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.retina = 2)
+library(tidyverse)
+library(ggpubr)
+source("figure_utils.R")
+```
+
+Since we found no evidence for divergent selection at inversions we searched for signatures of this type of selection at all loci genome-wide.  For this analysis we defined three pairwise comparisons of interest;
+
+1. Inshore vs Offshore for non-Magnetic Island individuals
+2. Cladocopium C1 vs C2 for non-Magnetic Island individuals
+3. Magnetic Island vs non-Magnetic Island.  
+
+### Fst and Theta stats in sliding windows
+
+For each comparison we first generated an appropriate 2d folded sfs and indexed fst file. The process is illustrated below for the C1, C2 symbiont comparison. 
+
+First find sites with SNPs that occur jointly across both groups with our given minInd threshold. 
+
+```bash
+angsd -bam c1c2_bam.list -ref ${ref} -anc ${ref} -C 50 \
+       -GL 2 -doSaf 1 -sites ${bed} -doMaf 1 -doCounts 1 -minQ 30 -minMapQ 30 \
+       -nThreads 40 -uniqueOnly 1 -doMajorMinor 1 -out c1c2_minInd40 -minInd 40
+
+zcat c1c2_minInd40.mafs.gz|sed '1d'|cut -f1,2 > c1c2_minInd40.sites
+angsd sites index c1c2_minInd40.sites
+```
+
+Then generate maf files independently at these sites for each subgroup
+
+```bash
+angsd -bam c1_bam.list -ref ${ref} -anc ${ref} -sites c1c2_minInd40.sites \
+       -GL 2 -doSaf 1 -doMaf 1 -nThreads 40 -doMajorMinor 1 -out c1
+
+angsd -bam c2_bam.list -ref ${ref} -anc ${ref} -sites c1c2_minInd40.sites \
+       -GL 2 -doSaf 1 -doMaf 1 -nThreads 40 -doMajorMinor 1 -out c2
+```
+
+Then use `realSFS` to generate the folded 2dsfs and indexed fst file
+
+```bash
+realSFS -P 24 c1.saf.idx c2.saf.idx -fold 1 > c1_c2.folded.2dsfs
+realSFS fst index c1.saf.idx c2.saf.idx -sfs c1_c2.folded.2dsfs -fold 1 -fstout c1_c2
+```
+
+Finally, calculate Fst in 20kb sliding windows with a 4kb step
+
+```bash
+realSFS fst stats2 c1_c2.fst.idx -win 20000 -step 4000 -type 1 > c1_c2.w20s4.fst
+```
+
+To complement Fst analyses we also used the `thetaStat` module in ANGSD to calculate a range of genetic diversity indicators on each population individually. This is illustrated for the C1 population below
+
+First calculate the 1d folded sfs
+
+```bash
+realSFS c1.saf.idx -P 24 -fold 1 > c1.folded.1dsfs
+```
+
+Then use `saf2theta` to create an indexed file suitable for processing with thetaStat
+
+```bash
+realSFS saf2theta c1.saf.idx -sfs c1.folded.1dsfs -outname c1 -fold 1
+```
+
+Finally we calculate thetas in 20kb sliding windows with a 4kb step
+
+```bash
+../../angsd/misc/thetaStat do_stat c1.thetas.idx -win 20000 -step 4000 -outnames c1.w20s4.theta -type 1
+```
+
+
+We also calculated `dxy` for population pairs.  In this case we used this [getDxy.pl](https://github.com/mfumagalli/ngsPopGen/blob/master/scripts/getDxy.pl) perl script.  The process for C1 and C2 is illustrated below.
+
+```bash
+# Calculates raw values
+perl scripts/getDxy.pl --pop1maf <(zcat c1.mafs.gz) --pop2maf <(zcat c2.mafs.gz) --minInd 1 > c1_c2.getDxy.txt
+
+cut -f1,2,3 c1_c2.w20s4.fst |sed '1d'|\
+perl -F"\t" -nle '@F[0]=~m/(\(\d+,\d+\))(\(\d+,\d+\))\((\d+),(\d+)\).*/g; print join "\t",@F[1],$3,$4, @F[2];' >angsd_fst_window_w20s4.bed
+
+# Calculates average values in the same sliding windows as used for Fst
+bedtools intersect -a angsd_fst_window_w20s4.bed -b <(awk '{print $1"\t"$2"\t"$2"\t"$3}' c1_c2.getDxy.txt | grep -v 'chromo') -loj |\
+bedtools groupby -g 1,2,3 -c 8 -o mean| awk '{print $1"\t"($2+$3)/2"\t"$4}' > c1_c2.w20s4.getDxy.txt
+```
+
+
+### Conversion to pseudo-chromosome coordinates
+
+All outputs were converted to RagTag pseudo-chromosome coordinates.  The process for C1 C2 is illustrated below
+
+```bash
+cd data/c1_vs_c2
+cat c1_c2.w20s4.fst | grep -v 'chr'  | awk '{OFS="\t";print $2,$3,$4,$5}' > c1_c2.w20s4_4column.fst
+python ../../scripts/translate_coords.py --keep c1_c2.w20s4_4column.fst ../ragtag/ragtag.scaffold.agp > c1_c2.w20s4.ragtag.txt
+
+python ../../scripts/translate_coords.py --keep c1_c2.w20s4.getDxy.txt ../ragtag/ragtag.scaffold.agp  > c1_c2.w20s4.getDxy.ragtag.txt
+
+python ../../scripts/translate_coords.py --keep <(grep -v 'Chr' c1.w20s4.theta.pestPG | cut -f 2-) ../ragtag/ragtag.scaffold.agp > c1.w20s4.theta.ragtag.pestPG
+python ../../scripts/translate_coords.py --keep <(grep -v 'Chr' c2.w20s4.theta.pestPG | cut -f 2-) ../ragtag/ragtag.scaffold.agp > c2.w20s4.theta.ragtag.pestPG
+```
+
+
+```{r}
+read_fst_df <- function(path,label){
+  read_table(path,col_names = c("chr","pos","nsites", "fst","chr_orig","pos_orig")) %>% 
+  left_join(offsets) %>% 
+  mutate(abs_pos = pos + offset) %>% 
+  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% 
+  mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplaced")) %>% 
+    add_column(label=label)
+}
+
+read_dxy_df <- function(path,label){
+  read_table(path,col_names = c("chr","pos","dxy","chr_orig","pos_orig"),na = ".") %>% 
+  left_join(offsets) %>% 
+  mutate(abs_pos = pos + offset) %>% 
+  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% 
+  mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplaced")) %>% 
+    add_column(label=label)
+}
+
+read_thetas_df <- function(path,pop,label){
+  read_table(path,col_names = c("chr","pos","tW","tP","tF","tH","tL","Tajima","fuf","fud","fayh","zeng","nSites","chr_orig","pos_orig"),na = ".") %>% 
+  left_join(offsets) %>% 
+  mutate(abs_pos = pos + offset) %>% 
+  mutate(chr_type=ifelse(scaffold_num %% 2 == 0,"dark", "light")) %>% 
+  mutate(chr_type=ifelse(grepl(chr,pattern="chr"),chr_type,"unplaced")) %>% 
+    add_column(pop=pop) %>% 
+    add_column(label=label)
+}
+```
+
+
+```{r}
+if ( !file.exists("cache/fst_df.rds")){
+
+  fst_nmi<- read_fst_df("data/north_MI/NI_MI.w20s4.ragtag.txt","north_MI")
+  fst_c1c2 <- read_fst_df("data/c1_c2/c1_c2.w20s4.ragtag.txt","c1_c2")
+  fst_inoff <- read_fst_df("data/inshore_offshore/inshore_offshore.w20s4.ragtag.txt","in_off")
+
+  fst_df <- rbind(fst_nmi,fst_c1c2,fst_inoff)
+  write_rds(fst_df,"cache/fst_df.rds")
+} else {
+  fst_df <- read_rds("cache/fst_df.rds")
+}
+```
+
+
+```{r}
+if (!file.exists("cache/dxy_df.rds")){
+  dxy_nmi <- read_dxy_df("data/north_MI/NI_MI.w20s4.getDxy.ragtag.txt","north_MI")
+  dxy_c1c2 <- read_dxy_df("data/c1_c2/c1_c2.w20s4.getDxy.ragtag.txt","c1_c2")
+  dxy_inoff <- read_dxy_df("data/inshore_offshore/inshore_offshore.w20s4.getDxy.ragtag.txt","in_off")
+
+  dxy_df <- rbind(dxy_c1c2,dxy_inoff,dxy_nmi)
+  write_rds(dxy_df,"cache/dxy_df.rds")
+} else {
+  dxy_df <- read_rds("cache/dxy_df.rds")
+}
+```
+
+```{r}
+if (!file.exists("cache/thetas_df.rds")){
+  thetas_mi <- read_thetas_df("data/north_MI/NI.w20s4.theta.ragtag.pestPG","MI","north_MI")
+  thetas_ni <- read_thetas_df("data/north_MI/NI.w20s4.theta.ragtag.pestPG","NI","north_MI")
+
+  thetas_inshore <- read_thetas_df("data/inshore_offshore/inshore.w20s4.theta.ragtag.pestPG","inshore","in_off")
+  thetas_offshore <- read_thetas_df("data/inshore_offshore/offshore.w20s4.theta.ragtag.pestPG","offshore","in_off")
+
+  thetas_c1 <- read_thetas_df("data/c1_c2/c1.w20s4.theta.ragtag.pestPG","c1","c1_c2")
+  thetas_c2 <- read_thetas_df("data/c1_c2/c2.w20s4.theta.ragtag.pestPG","c2","c1_c2")
+
+  thetas_df <- rbind(thetas_mi,thetas_ni,thetas_inshore,thetas_offshore,thetas_c1,thetas_c2)
+
+  write_rds(thetas_df,"cache/thetas_df.rds")
+} else {
+  thetas_df <- read_rds("cache/thetas_df.rds")
+}
+```
+
+
+
+```{r}
+# Combine all Fst, dxy and thetas data together.  Also calculate z-scores
+if(!file.exists("cache/mh_data.rds")){
+
+  fst_dxy_df <- dxy_df %>% 
+    left_join(fst_df)   %>% 
+    group_by(label) %>%  
+    mutate(z_fst = (fst-mean(fst))/sqrt(var(fst))) %>% 
+    mutate(covered=nsites/20000) 
+
+  thetas_fst <- thetas_df %>% 
+    left_join(fst_dxy_df)
+
+  mh_data <- thetas_fst %>% 
+    group_by(label,pop) %>% 
+    na.omit() %>% 
+    mutate(z_D = (Tajima-mean(Tajima))/sqrt(var(Tajima))) %>% 
+    mutate(z_PI = (tW - mean(tW))/sqrt(var(tW))) %>% 
+    ungroup() %>% 
+    group_by(chr,pos,label,abs_pos,chr_type,chr_orig,pos_orig) %>% 
+    summarise(fst=first(fst),dxy=first(dxy),Tajima=min(Tajima),z_pi = min(z_PI),z_D = min(z_D),z_fst = max(z_fst),covered=first(covered)) 
+
+  write_tsv(mh_data,"data/bedtools/scan_stats.tsv")
+  write_rds(mh_data,"cache/mh_data.rds")
+} else {
+  mh_data <- read_rds("cache/mh_data.rds")
+}
+```
+
+
+Overlay inversion positions
+
+```{r}
+read_invbed <- function(bedfile){
+  inv <- bedfile %>% str_extract("(L[0-5])")
+  read_tsv(bedfile,col_names = c("chr","start","end")) %>% 
+    add_column(invlabel = inv)
+}
+
+inv_bed <- list.files("data/11.check_locus_ld/",pattern = "*ragtag.bed",full.names = T) %>% 
+  map_dfr(read_invbed)
+
+inv_df <- inv_bed %>% 
+  left_join(offsets) %>% 
+  mutate(abs_start = start + offset) %>% 
+  mutate(abs_end = end+offset) %>% 
+  pivot_longer(starts_with("abs"),values_to = "x") %>% 
+  select(chr,x,invlabel)
+
+inv_df_poly <- inv_df[rep(row.names(inv_df),2),] %>% 
+  group_by(invlabel) %>% 
+  mutate(r=row_number()) %>% 
+  mutate(y = case_when(
+    r==1 ~ 1,
+    r==2 ~ 1,
+    r==3 ~ 0,
+    r==4 ~ 0
+  )) %>% 
+  mutate(point_order = case_when(
+    r == 3 ~ 4,
+    r == 4 ~ 3,
+    .default = r
+  )) %>% 
+  arrange(invlabel,point_order)
+
+#write_rds(inv_df_poly,"cache/inv_df_poly_mh.rds")
+
+mh_data_1 <- mh_data %>% 
+    mutate(label = case_when(
+      label=="c1_c2" ~ "Cladocopium C1 vs C2",
+      label=="in_off" ~ "Inshore vs Offshore",
+      label=="north_MI" ~ "Magnetic Island vs Other"
+    )) %>% 
+    filter(covered>0.1) %>% 
+    ungroup() %>% 
+    group_by(label) %>% 
+    mutate(category = case_when(
+    z_fst > 6 ~ "Islands",
+      .default = "Background",
+    ))  
+
+
+signif <- mh_data_1 %>% 
+  filter(category=="Islands")
+
+hlines <- mh_data_1 %>% 
+  filter(category=="Islands") %>% 
+  group_by(label,category) %>% 
+  filter(z_fst == min(z_fst)) %>% 
+    dplyr::select(category,fst)
+
+
+inv_df_poly_p <- inv_df_poly %>% mutate(y=y/100-0.01)
+
+ccols <- hcl.colors(n=3,palette = "Tropic")
+
+mh_data_1 %>% 
+  ggplot() + 
+  geom_point(aes(x=abs_pos/1e+6,y=fst,color=chr_type),size=0.2,alpha=.6) + 
+  geom_point(data = signif,
+             aes(x=abs_pos/1e+6,y=fst,color=chr_type),size=0.3,alpha=1,color="red") + 
+  geom_hline(data = hlines,aes(yintercept = fst)) +
+  scale_x_continuous(label = axis_chr$chr_id, breaks = axis_chr$centre/1e6) +
+  geom_polygon(data = inv_df_poly_p,aes(x=x/1e+6,y=y,group = invlabel),fill="black") +
+  xlab("Chromosome") +
+  ylab("Fst") + 
+  theme_pubr() +
+  guides(color="none") +
+  scale_color_manual(values = c("light"=ccols[1],"dark"="grey","unplaced"=ccols[3])) +
+  theme(text=element_text(size=main_text)) +
+  facet_wrap(~label,ncol = 1,scales = "free_y")
+```
+
+
+

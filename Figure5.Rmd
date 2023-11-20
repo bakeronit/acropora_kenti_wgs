@@ -1,0 +1,103 @@
+---
+title: "Figure 4"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggpubr)
+library(colorspace)
+library(cowplot)
+source("figure_utils.R")
+```
+
+
+```{r}
+mh_data <- read_rds("cache/mh_data.rds") %>% 
+  mutate(label = case_when(
+    label=="c1_c2" ~ "Cladocopium C1 vs C2",
+    label=="in_off" ~ "Inshore vs Offshore",
+    label=="north_MI" ~ "Magnetic Island vs Other"
+  )) %>% 
+  filter(covered>0.1) %>% 
+  ungroup() %>% 
+  group_by(label) %>% 
+  mutate(category = case_when(
+  z_fst > 6 ~ "Islands",
+    .default = "Background",
+  )) 
+```
+
+```{r}
+ccols <- hcl.colors(n=3,palette = "Tropic")
+
+signif <- mh_data %>% 
+               filter(category=="Islands")
+
+hlines <- mh_data %>% 
+  filter(category=="Islands") %>% 
+  group_by(label,category) %>% 
+  filter(z_fst == min(z_fst)) %>% 
+    dplyr::select(category,fst)
+
+mh_plot <- mh_data  %>% 
+  ggplot() + 
+  geom_point(aes(x=abs_pos/1e+6,y=fst,color=chr_type),size=0.2,alpha=0.5) +
+  geom_point(data = signif,aes(x=abs_pos/1e+6,y=fst,color=chr_type),size=0.3,alpha=1)  +
+  geom_hline(data = hlines,aes(yintercept = fst)) +
+  scale_x_continuous(label = axis_chr$chr_id, breaks = axis_chr$centre/1e6) + 
+  xlab("Chromosome") +
+  ylab("Fst") + 
+  theme_pubr() +
+  guides(color="none") +
+  scale_color_manual(values = c("light"=ccols[1],"dark"="grey","unplaced"=ccols[3])) +
+  theme(text=element_text(size=main_text)) +
+  facet_wrap(~label,ncol = 1,scales = "free_y")
+```
+
+
+```{r}
+library(ggpubr)
+thetas_plot <- function(labelin){
+  thetas_fst %>% 
+    mutate(category = case_when(
+    z_fst > 10 ~ "Islands",
+    .default = "Background",
+    )) %>% 
+    pivot_longer(cols = c("fst","Tajima","dxy","tP"),names_to = "stat",values_to = "value") %>% 
+    mutate(stat_order = case_when(
+      stat=="fst" ~ 1,
+      stat=="dxy" ~ 2,
+      stat=="tP" ~ 3,
+      stat=="Tajima" ~4
+    )) %>% 
+    na.omit() %>% 
+    filter(label==labelin) %>% 
+#    filter(stat %in% c("fst","dxy","tP","Tajima")) %>% 
+    filter(stat %in% c("fst","dxy","Tajima")) %>% 
+        ggplot(aes(x=pop,y=value,fill=category)) + 
+    geom_boxplot(alpha=.6, show.legend = FALSE,outlier.alpha = 0.5,outlier.size = .3,outlier.color = "grey") +
+#    geom_boxplot(width=.2,alpha=.6,fatten = NULL, show.legend = FALSE,outlier.alpha = 0.5,outlier.size = .3,outlier.color = "grey") +    
+#    introdataviz::geom_split_violin(alpha = .4, trim = TRUE) +
+    facet_wrap(~reorder(stat,stat_order),scales = "free",nrow = 1,strip.position = "top", labeller = as_labeller(c(fst = "F[ST]", dxy = "D[XY]",tP = "pi",Tajima="D"),label_parsed)) +
+    xlab("") + ylab("") +
+    guides(fill="none") +
+    theme_pubr() +
+    theme(text=element_text(size=main_text))
+}
+
+c1c2_p <- thetas_plot("c1_c2")
+
+inoff_p <- thetas_plot("in_off")
+
+nomi_p <- thetas_plot("north_MI")
+```
+
+```{r}
+boxes <- plot_grid(c1c2_p,inoff_p,nomi_p,ncol = 1)
+plot_grid(mh_plot,boxes,rel_widths = c(0.6,0.4))
+ggsave("figures/Figure5.png",height = 8,width = 12,bg = "white")
+```
+
+
