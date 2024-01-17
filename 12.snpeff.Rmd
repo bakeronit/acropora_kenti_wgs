@@ -105,10 +105,13 @@ snp_summ <- snpeff %>%
 snp_summ %>% 
   na.omit() %>% 
     ggplot(aes(x=af_cat,y=proportion)) + 
-  geom_point(aes(color=region)) + 
+  geom_point(aes(color=region),size=3) + 
+  scale_color_manual(values = c("background"="grey","inversion"="red")) +
   facet_wrap(~reorder(severity,severity_order),scales = "free") + 
   xlab("Minor Allele Frequency") + ylab("Proportion of SNPs") +
-  theme(axis.text.x = element_text(angle=90))
+  theme_pubr() + theme(legend.title = element_blank(), legend.position = "right") +
+  theme(axis.text.x = element_text(size=8,angle=90)) 
+ggsave("~/Dropbox/ABACBS Talk/snpeff.png",width = 8,height = 4)
 ```
 
 ```{r}

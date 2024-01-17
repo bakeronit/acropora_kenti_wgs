@@ -130,7 +130,7 @@ write_rds(genotype_data,"cache/inv_genotype_data.rds")
 write_tsv(genotype_data,"data/genotype_data.tsv")
 ```
 
-Having assigned genotypes we then performed two tests. First we tested to see if overall distribution of genotypes at each locus is in Hardy Weinberg Equilibrium (HWE). We found no significant deviations from HWE.
+Having assigned genotypes we then performed two tests. First we tested to see if overall distribution of genotypes at each locus is in Hardy Weinberg Equilibrium (HWE). We found no significant deviations from HWE.  Interestingly, we did that for all inversions except L3 the number of heterozygotes was more than expected (though not significant), and in the case of L3 the 
 
 ```{r}
 library(genetics)
@@ -165,6 +165,21 @@ print(mafs)
 
 
 
+Overall D values are biased toward > 0, meaning that we are finding more heterozygotes than expected. 
+
+```{r}
+D_overall <- c(hwe_L1$diseq$D.overall,hwe_L2$diseq$D.overall,hwe_L3$diseq$D.overall,hwe_L4$diseq$D.overall,hwe_L5$diseq$D.overall)
+d_frame <- data.frame(locus=c("L1","L2","L3","L4","L5"),D=D_overall,maf=mafs,L = c(1,2,3,4,5))
+
+ggplot(d_frame,aes(x=L,y=D)) + 
+  geom_boxplot() + 
+  geom_jitter(aes(color=maf,size=maf)) + 
+  xlab("") + 
+  theme_pubr() +
+  scale_color_viridis_c() +
+  scale_size_area(range(1,10)) + 
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+```
 
 
 
