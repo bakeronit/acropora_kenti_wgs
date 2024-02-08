@@ -92,6 +92,11 @@ pc1_genotypes <- function(pc1_loading){
       cluster==1 ~ "A/A",
       cluster==2 ~ "A/B",
       cluster==3 ~ "B/B"
+    )) %>% 
+    mutate(cluster_centre = case_when(
+      cluster==1 ~ min(pc1),
+      cluster==2 ~ (min(pc1)+max(pc1))/2,
+      cluster==3 ~ max(pc1)
     ))
 
 }
@@ -102,6 +107,7 @@ pc1_genotype_data <- pc1 %>%
 
 write_rds(pc1_genotype_data,"cache/pc1_genotype_data.rds")
 ```
+
 
 To check that this automatic clustering method produces sensible cluster assignments we visualise asignments along with the original PC1 data for all inversion loci as in the plot below.
 
@@ -169,20 +175,27 @@ Overall D values are biased toward > 0, meaning that we are finding more heteroz
 
 ```{r}
 D_overall <- c(hwe_L1$diseq$D.overall,hwe_L2$diseq$D.overall,hwe_L3$diseq$D.overall,hwe_L4$diseq$D.overall,hwe_L5$diseq$D.overall)
-d_frame <- data.frame(locus=c("L1","L2","L3","L4","L5"),D=D_overall,maf=mafs,L = c(1,2,3,4,5))
+Dp_overall <- c(hwe_L1$diseq$Dprime.overall,hwe_L2$diseq$Dprime.overall,hwe_L3$diseq$Dprime.overall,hwe_L4$diseq$Dprime.overall,hwe_L5$diseq$Dprime.overall)
+d_frame <- data.frame(locus=c("L1","L2","L3","L4","L5"),D=D_overall,maf=mafs,L = c(1,2,3,4,5),Dp=Dp_overall)
+
+write_rds(d_frame,file = "cache/hwe_data.rds")
 
 ggplot(d_frame,aes(x=L,y=D)) + 
   geom_boxplot() + 
-  geom_jitter(aes(color=maf,size=maf)) + 
+  geom_point(aes(size=maf)) + 
   xlab("") + 
   theme_pubr() +
+  scale_x_continuous(labels=c("L1","L2","L3","L4","L5")) +
   scale_color_viridis_c() +
   scale_size_area(range(1,10)) + 
-  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+  theme( axis.ticks.x = element_blank())
 ```
 
 
+If we treat the D statistic as a random variable we can use a [Wilcoxon signed rank test](https://en.wikipedia.org/wiki/Wilcoxon_signed-rank_test) to determine whether the median is significantly different from 0.
 
-
+```{r}
+wilcox.test(d_frame$D,alternative = "greater",correct = FALSE,conf.int = TRUE)
+```
 
 

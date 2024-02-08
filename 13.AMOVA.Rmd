@@ -76,5 +76,33 @@ symbiont_results <- map_dfr(c("L1","L2","L3","L4","L5"),amova_symbiont)
 kable(symbiont_results)
 ```
 
+Summarise allele (karyotype) frequencies
 
+```{r}
+library(ggforce)
 
+df <- genotype_data %>% 
+  pivot_longer(cols = matches("^L[0-5]"),names_to = "inversion",values_to = "genotype") %>% 
+  extract(inversion, into = "inversion_num", regex = "L([0-5])", convert = T,remove = F) %>% 
+  group_by(reef,inversion,reef_order) %>% 
+  summarise(total=n(), aa=sum(genotype=="A/A")/total,ab=sum(genotype=="A/B")/total,bb=sum(genotype=="B/B")/total) %>% 
+  mutate(AA = case_when(
+    aa>bb ~ aa,
+    .default = bb
+  )) %>% 
+  mutate(BB = case_when(
+    aa>bb ~ bb,
+    .default = aa
+  )) %>% 
+  mutate(AB = ab) %>% 
+  dplyr::select(-aa,-ab,-bb) %>% 
+  pivot_longer(cols = c("AA","AB","BB"),names_to = "genotype",values_to = "proportion") 
+  
+write_rds(df,file = "cache/genotype_summaries.rds")
+
+ggplot(data=df) + 
+  geom_arc_bar(aes(x0=0,y0=0,r0=0.5,r=1,amount=proportion,fill=genotype),stat="pie") +
+  facet_grid(reorder(reef,reef_order)~inversion) + 
+  theme_no_axes() +
+  coord_fixed()
+```

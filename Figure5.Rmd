@@ -27,6 +27,8 @@ mh_data <- read_rds("cache/mh_data.rds") %>%
   z_fst > 6 ~ "Islands",
     .default = "Background",
   )) 
+
+thetas_fst <- read_rds("cache/thetas_fst.rds")
 ```
 
 ```{r}
@@ -62,15 +64,23 @@ library(ggpubr)
 thetas_plot <- function(labelin){
   thetas_fst %>% 
     mutate(category = case_when(
-    z_fst > 10 ~ "Islands",
+    z_fst > 6 ~ "Islands",
     .default = "Background",
     )) %>% 
-    pivot_longer(cols = c("fst","Tajima","dxy","tP"),names_to = "stat",values_to = "value") %>% 
+    pivot_longer(cols = c("fst","Tajima","dxy"),names_to = "stat",values_to = "value") %>% 
     mutate(stat_order = case_when(
       stat=="fst" ~ 1,
       stat=="dxy" ~ 2,
       stat=="tP" ~ 3,
       stat=="Tajima" ~4
+    )) %>% 
+    mutate(pop = case_when(
+      pop=="MI" ~ "MI",
+      pop=="NI" ~ "non-MI",
+      pop=="inshore" ~ "Inshore",
+      pop=="offshore" ~ "Offshore",
+      pop=="c1" ~ "C1",
+      pop=="c2" ~ "C2"
     )) %>% 
     na.omit() %>% 
     filter(label==labelin) %>% 

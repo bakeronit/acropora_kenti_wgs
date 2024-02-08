@@ -209,8 +209,10 @@ if(!file.exists("cache/mh_data.rds")){
 
   write_tsv(mh_data,"data/bedtools/scan_stats.tsv")
   write_rds(mh_data,"cache/mh_data.rds")
+  write_rds(thetas_fst,"cache/thetas_fst.rds")
 } else {
   mh_data <- read_rds("cache/mh_data.rds")
+  thetas_fst <- read_rds("cache/thetas_fst.rds")  
 }
 ```
 
@@ -232,7 +234,7 @@ inv_df <- inv_bed %>%
   mutate(abs_start = start + offset) %>% 
   mutate(abs_end = end+offset) %>% 
   pivot_longer(starts_with("abs"),values_to = "x") %>% 
-  select(chr,x,invlabel)
+  dplyr::select(chr,x,invlabel)
 
 inv_df_poly <- inv_df[rep(row.names(inv_df),2),] %>% 
   group_by(invlabel) %>% 
@@ -251,7 +253,10 @@ inv_df_poly <- inv_df[rep(row.names(inv_df),2),] %>%
   arrange(invlabel,point_order)
 
 #write_rds(inv_df_poly,"cache/inv_df_poly_mh.rds")
+```
 
+
+```{r}
 mh_data_1 <- mh_data %>% 
     mutate(label = case_when(
       label=="c1_c2" ~ "Cladocopium C1 vs C2",
@@ -298,5 +303,16 @@ mh_data_1 %>%
   facet_wrap(~label,ncol = 1,scales = "free_y")
 ```
 
+Summary of Fst within inversions
+
+```{r}
+inv_stats <- read_tsv("data/bedtools/inversion_stats.bed",col_names = c("chr","inv_s","inv_e","inv","chr2","start","end","contrast","fst","z_fst"))
+
+inv_stats %>% 
+  filter(contrast!=".") %>% 
+  ggplot(aes(y=z_fst)) + 
+  geom_boxplot(aes(x=inv)) + 
+  facet_wrap(~contrast,ncol=1)
+```
 
 

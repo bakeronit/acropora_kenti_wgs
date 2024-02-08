@@ -99,8 +99,6 @@ enrich_table <- rbind(
   mutate(classic=as.numeric(classic))
 ```
 
-This revealed a single term "DNA Binding" that was
-
 ```{r}
 enrich_table %>% 
   filter(classic<0.01) %>%

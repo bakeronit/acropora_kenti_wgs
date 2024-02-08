@@ -66,8 +66,8 @@ read_snpeff_bcftools <- function(path,region){
     mutate(AF=as.numeric(AD2)/(as.numeric(AD1)+as.numeric(AD2)))
 }
 
-inv_snpeff <- read_snpeff_bcftools("snpeff/north187_inv.snpeff.tsv","inversion")
-background_snpeff <- read_snpeff_bcftools("snpeff/north187_random.snpeff.tsv","background")
+inv_snpeff <- read_snpeff_bcftools("data/snpeff/north187_inv.snpeff.tsv","inversion")
+background_snpeff <- read_snpeff_bcftools("data/snpeff/north187_random.snpeff.tsv","background")
 
 snpeff <- rbind(inv_snpeff,background_snpeff)
 write_rds(snpeff,"data/snpeff/snpeff.rds")
@@ -140,4 +140,18 @@ snpeff %>%
 
 
 
+
+
+```{r}
+#Sc0000013	1280926	3136890	L1
+
+snpeff %>% 
+  filter(chr=="Sc0000013") %>% 
+  filter(region=="inversion") %>% 
+  filter(!is.na(severity)) %>% 
+  mutate(pos = pos - 1280926) %>% 
+  ggplot(aes(x=pos)) + 
+  geom_point(aes(y=AF)) + 
+  facet_wrap(~severity)
+```
 

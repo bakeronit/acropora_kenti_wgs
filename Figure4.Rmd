@@ -63,69 +63,162 @@ p_random <- ggtree(random_dendro,color="grey") %<+% l1_annotation +
 ```{r}
 snpeff <- read_rds("data/snpeff/snpeff.rds")
 
-region_totals <- snpeff %>% 
-  na.omit() %>% 
-  filter(AF<0.99) %>% # Removing errors in the reference
-  group_by(region) %>% summarise(n=n())
 
-p_snps <- snpeff %>% 
-  na.omit() %>% 
+snp_summ <- snpeff %>%
+  filter(severity!="MODIFIER") %>%   
+  filter(!grepl("INDEL",info)) %>% 
+  mutate(AF=as.numeric(AF)) %>%
+  na.omit() %>%
+  mutate(maf = case_when(
+    AF<0.5 ~ as.numeric(AF),
+    .default = 1-as.numeric(AF)
+  )) %>%
   filter(AF<0.99) %>% 
-  group_by(region) %>% 
-  slice_sample(n=min(region_totals$n)) %>% 
-  mutate(af_cat = cut(AF,breaks = c(0,0.05,0.15,0.3,0.5,0.7,1.0),ordered_result = TRUE,labels = FALSE)) %>%
+  mutate(maf_cat = cut(maf,breaks = c(0,0.1,0.2,0.5))) %>%
+  mutate(af_cat = cut(AF,breaks = c(0,0.05,0.1,0.2,0.5,1))) %>%
   group_by(region,severity,af_cat) %>%
   summarise(num_snps = n()) %>% 
-    mutate(severity_order = case_when(
+  ungroup() %>% 
+  group_by(region,af_cat) %>%
+  mutate(total = sum(num_snps)) %>%
+  group_by(region,af_cat,severity) %>%
+  summarise(proportion = num_snps/total,num_snps) %>%
+  mutate(severity_order = case_when(
     severity=="HIGH" ~ 4,
     severity=="MODERATE" ~ 3,
     severity=="LOW" ~ 2,
     .default = 1
-  )) %>%
-  mutate(af = case_when(
-    af_cat==1 ~ 0.05/2,
-    af_cat==2 ~ 0.1,
-    af_cat==3 ~ (0.15+0.3)/2,
-    af_cat==4 ~ (0.3+0.5)/2,
-    af_cat==5 ~ (0.5+0.7)/2,
-    af_cat==6 ~ (0.7+1)/2
-  )) %>% 
-  filter(severity!="MODIFIER") %>% 
-  ggplot(aes(x=af)) + 
-  geom_line(aes(y=num_snps,color=region)) +
-  geom_point(aes(y=num_snps,color=region)) +
-  facet_wrap(~reorder(severity,severity_order) ,scales = "free_y",ncol = 1) + 
+  ))
+
+p_snps <- snp_summ %>% 
+  na.omit() %>% 
+    ggplot(aes(x=af_cat,y=proportion)) + 
+  geom_point(aes(color=region),size=3) + 
+  geom_line(aes(group=region)) +
+#  scale_color_manual(values = c("background"="grey","inversion"="red")) +
+  facet_wrap(~reorder(severity,severity_order),scales = "free_y",ncol=1) + 
+  xlab("Minor Allele Frequency") + ylab("Proportion of SNPs") +
   theme_pubr() + 
-  theme(text=element_text(size=main_text)) +
-  theme(axis.text.x = element_text(angle=0), legend.title = element_blank()) + 
-  scale_color_manual(values = c("background"="darkgrey","inversion"="red"), labels = c("Background","Inversions")) +
-  xlab("Allele Frequency") + ylab("Normalised number of SNPs")
+  theme(legend.title = element_blank(), legend.position = "top") +
+  theme(axis.text.x = element_text(size=main_text,angle=90)) +
+   scale_color_manual(values = c("background"="darkgrey","inversion"="red"), labels = c("Background","Inversions")) 
+ggsave("figures/p_snps.png",width = 4,height = 6)
+
+
+
+# region_totals <- snpeff %>% 
+#   na.omit() %>% 
+#   filter(AF<0.99) %>% # Removing errors in the reference
+#   group_by(region) %>% summarise(n=n())
+# 
+# p_snps <- snpeff %>% 
+#   na.omit() %>% 
+#   filter(AF<0.99) %>% 
+#   group_by(region) %>% 
+#   slice_sample(n=min(region_totals$n)) %>% 
+#   mutate(af_cat = cut(AF,breaks = c(0,0.05,0.15,0.3,0.5,0.7,1.0),ordered_result = TRUE,labels = FALSE)) %>%
+#   group_by(region,severity,af_cat) %>%
+#   summarise(num_snps = n()) %>% 
+#     mutate(severity_order = case_when(
+#     severity=="HIGH" ~ 4,
+#     severity=="MODERATE" ~ 3,
+#     severity=="LOW" ~ 2,
+#     .default = 1
+#   )) %>%
+#   mutate(af = case_when(
+#     af_cat==1 ~ 0.05/2,
+#     af_cat==2 ~ 0.1,
+#     af_cat==3 ~ (0.15+0.3)/2,
+#     af_cat==4 ~ (0.3+0.5)/2,
+#     af_cat==5 ~ (0.5+0.7)/2,
+#     af_cat==6 ~ (0.7+1)/2
+#   )) %>% 
+#   filter(severity!="MODIFIER") %>% 
+#   ggplot(aes(x=af)) + 
+#   geom_line(aes(y=num_snps,color=region)) +
+#   geom_point(aes(y=num_snps,color=region)) +
+#   facet_wrap(~reorder(severity,severity_order) ,scales = "free_y",ncol = 1) + 
+#   theme_pubr() + 
+#   theme(text=element_text(size=main_text)) +
+#   theme(axis.text.x = element_text(angle=0), legend.title = element_blank()) + 
+#   scale_color_manual(values = c("background"="darkgrey","inversion"="red"), labels = c("Background","Inversions")) +
+#   xlab("Allele Frequency") + ylab("Normalised number of SNPs")
 ```
 
+
+```{r}
+hwe_data <- read_rds("cache/hwe_data.rds")
+
+p_hwe <- ggplot(hwe_data,aes(x=L,y=D)) + 
+  coord_flip() +
+  geom_boxplot() + 
+  geom_point(size=6) + 
+  geom_hline(yintercept=0,linetype = 2) +
+  xlab("") + 
+  ylab("Hardy Weinberg Disequilibrium, D") +
+  theme_pubr() +
+  scale_x_continuous(labels=c("L1","L2","L3","L4","L5")) +
+  scale_color_viridis_c() +
+  scale_size_area(range(1,10)) + 
+  theme( axis.ticks.y = element_blank(), axis.text.x = element_text(angle=90,size= main_text)) 
+ggsave("figures/p_hwe.png",width = 6, height = 8)
+```
+
+```{r}
+geno_colors = hcl.colors(n=3,palette = "Berlin")
+geno_summaries <- read_rds("cache/genotype_summaries.rds") %>% 
+  extract(inversion, into = "l_order",regex = "L([0-5])",remove = F,convert = T)
+
+p_geno <- ggplot(data=geno_summaries) + 
+  geom_arc_bar(aes(x0=0,y0=0,r0=0.5,r=1,amount=proportion,fill=genotype),stat="pie") +
+#  facet_grid(reorder(reef,reef_order)~inversion) + 
+  facet_grid(reorder(inversion,l_order,decreasing=T)~reorder(reef,reef_order)) +   
+  theme_no_axes() +
+  coord_fixed() + 
+  scale_fill_manual("Karyotype",values = c("AA"=geno_colors[1],"AB"=geno_colors[2],"BB"=geno_colors[3]),labels=c("A/A","A/B","B/B")) +
+  theme(legend.position = "bottom")
+ggsave("figures/p_geno.png",width = 8, height = 5)
+```
 
 
 ```{r}
 library(cowplot)
 
-legend <- get_legend(
-  # create some space to the left of the legend
-  p_l1 + theme(legend.box.margin = margin(0, 0, 0, 12))
-)
+# legend <- get_legend(
+#   # create some space to the left of the legend
+#   p_l1 + theme(legend.box.margin = margin(0, 0, 0, 12))
+# )
+# 
+# p_dendro <- plot_grid(p_random+theme(legend.position = "none"),p_l1+theme(legend.position = "none"),nrow = 1)
+# 
+# p_dendro_legend <- plot_grid(legend,p_dendro,ncol = 1,rel_heights = c(0.1,1))
+# 
+# legend_snps <- get_legend(
+#   p_snps + theme(legend.box.margin = margin(0, 0, 0, 12))
+# )
+# 
+# p_snps_legend <- plot_grid(legend_snps,p_snps,ncol = 1,rel_heights = c(0.1,1))
 
-p_dendro <- plot_grid(p_random+theme(legend.position = "none"),p_l1+theme(legend.position = "none"),nrow = 1)
+hwe_group <- plot_grid(p_geno+theme(legend.position = "none"),p_hwe,ncol=2,rel_widths = c(0.8,0.1))
 
-p_dendro_legend <- plot_grid(legend,p_dendro,ncol = 1,rel_heights = c(0.1,1))
 
-legend_snps <- get_legend(
-  p_snps + theme(legend.box.margin = margin(0, 0, 0, 12))
-)
 
-p_snps_legend <- plot_grid(legend_snps,p_snps,ncol = 1,rel_heights = c(0.1,1))
+plot_grid(p_geno+theme(legend.position = "none"),p_hwe,ncol=2,rel_widths = c(0.8,0.5))
+```
 
-plot_grid(p_snps,p_dendro_legend,ncol = 2,rel_widths = c(0.3,0.7),labels = c("A","B"))
+
+```{r}
+plot_grid(p_snps+theme(legend.position = "none"),hwe_group,ncol = 2,rel_widths = c(0.1,0.8),labels = c("A","B"),align = "v",axis = "b")
 
 
 
 ggsave("figures/Figure4.png",height = 6,width = 12,bg = "white")
+```
+
+
+```{r}
+library(patchwork)
+
+p_geno + p_hwe
 ```
 
