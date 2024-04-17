@@ -1,6 +1,8 @@
 ## Population genomics of *Acropora kenti* on the Great Barrier Reef
 
-Analysis and code including in this project
+This repository has also been archiinved on Zenodo: [![DOI](https://zenodo.org/badge/473865769.svg)](https://zenodo.org/doi/10.5281/zenodo.10983040)
+
+Analysis and code included in this project:
 
 ### Sequencing data processing
 - [Sampling information and data sequencing](00.sample_sequencing_info.md)
