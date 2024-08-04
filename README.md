@@ -1,6 +1,12 @@
 ## Population genomics of *Acropora kenti* on the Great Barrier Reef
 
+This repository contains computational methods including source code and explanatory notes for paper published in:
+
+Jia Zhang, Nadja M. Schneller, Matt A. Field, Cheong Xin Chan, David J. Miller, Jan M. Strugnell, Cynthia Riginos, Line Bay, Ira Cooke. Molecular Ecology. https://doi.org/10.1111/mec.17468
+
+
 This repository has also been archiinved on Zenodo: [![DOI](https://zenodo.org/badge/473865769.svg)](https://zenodo.org/doi/10.5281/zenodo.10983040)
+
 
 Analysis and code included in this project:
 
